@@ -1,0 +1,50 @@
+name: Verify Linux preview
+on:
+  push:
+    paths:
+      - 'Operating_System_Specific/Linux/**'
+      - '.github/workflows/linux-preview.yml'
+  pull_request:
+    paths:
+      - 'Operating_System_Specific/Linux/**'
+      - '.github/workflows/linux-preview.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ubuntu:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install distro-maintained Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential pkg-config libei-dev libeis-dev \
+            python3-gi python3-cryptography gir1.2-gtk-4.0 gir1.2-secret-1 xvfb dbus-x11
+      - name: Native EIS, TLS, lifecycle state and filesystem checks
+        run: sh Operating_System_Specific/Linux/scripts/test.sh
+      - name: Source privacy gate
+        run: python3 Scripts/check_public_source.py
+      - name: Render idle GTK setup without permission or networking
+        env:
+          GSK_RENDERER: cairo
+          PYTHONPATH: Operating_System_Specific/Linux:Operating_System_Specific/Linux/tests
+        run: |
+          dbus-run-session -- xvfb-run -a python3 Operating_System_Specific/Linux/tests/render_desktop.py /tmp/batcave-linux-setup.png
+      - name: Build separate Debian preview
+        run: sh Operating_System_Specific/Linux/scripts/package.sh
+      - name: Install and remove on the disposable runner
+        run: |
+          profile=$(mktemp -d /tmp/batcave-package-check.XXXXXXXX)
+          export XDG_DATA_HOME="$profile"
+          sudo apt-get install -y ./Operating_System_Specific/Linux/.build/batcave-linux-preview_0.2.0~preview.1_amd64.deb
+          test "$(batcave-linux-preview --version)" = '0.2.0-preview.1'
+          batcave-linux-preview --diagnose > /tmp/batcave-diagnose.json || test "$?" = 2
+          test ! -e "$profile/batcave/secure-preview/identity.json"
+          mkdir -p "$profile/batcave/secure-preview"
+          printf 'retain existing user state\n' > "$profile/batcave/secure-preview/marker"
+          sudo apt-get remove -y batcave-linux-preview
+          test ! -e /usr/bin/batcave-linux-preview
+          test "$(cat "$profile/batcave/secure-preview/marker")" = 'retain existing user state'
