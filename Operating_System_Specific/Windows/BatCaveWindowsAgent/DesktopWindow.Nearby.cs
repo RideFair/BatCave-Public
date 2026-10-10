@@ -18,6 +18,7 @@ internal sealed partial class DesktopWindow
     private string? _nearbyError;
     private bool _linkingNearby;
     private InitialSharingConsent? _initialSharingConsent;
+    private NearbyComputer? _connectionCandidate;
 
     private Control BuildNearbyPage()
     {
@@ -159,13 +160,20 @@ internal sealed partial class DesktopWindow
         }
         else for (var i = 0; i < computers.Length; i++) _nearbyList.Items[i] = computers[i];
         if (_peers.SelectedItem is not PeerItem approved || _lan.HasPeer || _connecting || _reconnectSuspended) return;
-        var reachable = computers.FirstOrDefault(p => p.DeviceId == approved.Card.DeviceId
+        _connectionCandidate = computers.FirstOrDefault(p => p.DeviceId == approved.Card.DeviceId
             && p.Fingerprint.Equals(approved.Card.CertificateSha256, StringComparison.OrdinalIgnoreCase));
-        if (reachable is null) return;
-        _loadingConnection = true;
-        try { _host.Text = reachable.Address.ToString(); _inputPort = reachable.InputPort; }
-        finally { _loadingConnection = false; }
+        if (_connectionCandidate is null) return;
         _connectWanted = string.CompareOrdinal(_identity.DeviceId, approved.Card.DeviceId) < 0;
+    }
+
+    private (string Host, int Port) ConnectionTarget(DeviceIdentityStore.PairingCard card)
+    {
+        var candidate = _connectionCandidate;
+        if (candidate is not null && candidate.DeviceId == card.DeviceId
+            && candidate.Fingerprint.Equals(card.CertificateSha256, StringComparison.OrdinalIgnoreCase)
+            && DateTimeOffset.UtcNow - candidate.Seen <= TimeSpan.FromSeconds(12))
+            return (candidate.Address.ToString(), candidate.InputPort);
+        return (_host.Text.Trim(), _inputPort);
     }
 
     private void UpdateNearbyPage(DesktopSetupState state)

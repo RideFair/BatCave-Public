@@ -42,5 +42,74 @@ internal static partial class ModifierRegression
                 "cancelled requests and saved approval never arm input");
         });
         Console.WriteLine("PASS: nearby UI cancellation and stale callbacks cannot save trust; initial sharing consent is revoked by Pause, navigation, role change and sleep.");
+        CheckReplacedHello();
+        CheckDiscoveryPersistence();
+    }
+
+    private static void CheckReplacedHello()
+    {
+        WithPairingFixture((window, _, first, _) =>
+        {
+            Call(window, "ApplyApproval", first); Application.DoEvents();
+            ((System.Windows.Forms.Timer)Get(window, "_timer")).Stop();
+            var lan = (LanBridgePeer)Get(window, "_lan");
+            using var writer = new StreamWriter(Stream.Null);
+            Set(lan, "_writer", writer); Set(lan, "_peerDeviceId", first.DeviceId);
+            Set(lan, "_sessionGeneration", 1L);
+            var hello = new DeviceHelloPayload(first.DeviceId, first.DisplayName, "Windows", "Synthetic test", new(0, 0, 1920, 1080, 1919, 1079));
+            ((Action<DeviceHelloPayload>)Get(lan, "PeerHello"))(hello);
+            // Replace the connection before its queued UI notification runs.
+            Set(lan, "_sessionGeneration", 3L);
+            var grant = new InitialSharingConsent(first.DeviceId, first.CertificateSha256, false, 2, DateTimeOffset.UtcNow.AddSeconds(30));
+            Set(window, "_initialSharingConsent", grant);
+            Application.DoEvents();
+            Require(Get(window, "_hello") is null, "a replaced connection's queued hello cannot supply current geometry");
+            Require(ReferenceEquals(Get(window, "_initialSharingConsent"), grant), "a stale hello cannot consume a newer approval");
+            ((Action<DeviceHelloPayload>)Get(lan, "PeerHello"))(hello); Application.DoEvents();
+            Require(ReferenceEquals(Get(window, "_hello"), hello) && Get(window, "_initialSharingConsent") is null,
+                "the current hello supplies geometry and consumes initial consent once");
+            using var agent = new LocalBridgeAgent(lan, inspectionOnly: true, inputSink: new RecordingInput());
+            _ = agent.Handle;
+            agent.EnableReceiving(1);
+            Require(!agent.IsReceivingEnabled, "approval for an old connection cannot enable the replacement receiver");
+            agent.EnableReceiving(3);
+            Require(agent.IsReceivingEnabled, "explicit approval enables its exact current connection");
+            var generation = (long)Get(agent, "_inputGeneration");
+            agent.EnableReceiving(1); agent.PostStartPersistentHandoff(1); Application.DoEvents();
+            Require(agent.IsReceivingEnabled && !agent.IsBridgeActive && (long)Get(agent, "_inputGeneration") == generation,
+                "stale activation cannot stop current receiving or queue source sharing on a replacement");
+            agent.Close();
+        });
+        Console.WriteLine("PASS: delayed connection notifications and activation cannot change geometry, consume newer approval, or enable a replacement session.");
+    }
+
+    private static void CheckDiscoveryPersistence()
+    {
+        WithPairingFixture((window, _, first, _) =>
+        {
+            Call(window, "ApplyApproval", first);
+            ((System.Windows.Forms.Timer)Get(window, "_timer")).Stop();
+            ((TextBox)Get(window, "_host")).Text = "192.0.2.10";
+            Call(window, "SaveSettings");
+            using var discovery = new NearbyDiscovery("windows:local-fixture", () => []);
+            Set(window, "_discovery", discovery);
+            discovery.Remember(new(first.DeviceId, first.DisplayName, "windows", first.CertificateSha256,
+                IPAddress.Parse("192.0.2.99"), 49999, 47873, false, DateTimeOffset.UtcNow), DateTimeOffset.UtcNow);
+            // Exercise the timer's cache refresh only; it starts no socket or input hook.
+            Set(window, "_inspectionOnly", false);
+            try { Call(window, "RefreshNearby"); }
+            finally { Set(window, "_inspectionOnly", true); }
+            ((ComboBox)Get(window, "_role")).SelectedIndex = 1;
+            var saved = File.ReadAllText((string)Get(window, "_settingsPath"));
+            Require(saved.Contains("192.0.2.10") && !saved.Contains("192.0.2.99") && !saved.Contains("49999"),
+                "changing a setting cannot persist an unverified discovery address or port");
+            Require(((string, int))Call(window, "ConnectionTarget", first)! == ("192.0.2.99", 49999),
+                "a fresh candidate is available for pinned verification without saving it");
+            var candidate = (NearbyComputer)Get(window, "_connectionCandidate");
+            Set(window, "_connectionCandidate", candidate with { Seen = DateTimeOffset.UtcNow.AddSeconds(-13) });
+            Require(((string, int))Call(window, "ConnectionTarget", first)! == ("192.0.2.10", 47871),
+                "expired discovery falls back to the verified endpoint");
+        });
+        Console.WriteLine("PASS: discovery candidates cannot overwrite a verified saved endpoint through unrelated settings changes.");
     }
 }

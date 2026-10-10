@@ -78,6 +78,33 @@ internal sealed class LanBridgePeer : IDisposable
         get { lock (_connectionLock) { return _peerDeviceId; } }
     }
 
+    internal sealed record PeerReachability(IPAddress Address, int? InputPort);
+    internal PeerReachability? VerifiedReachability
+    {
+        get
+        {
+            lock (_connectionLock)
+            {
+                if (_authenticatedPeer is null || _peerDeviceId is null || _client?.Client.RemoteEndPoint is not IPEndPoint endpoint) return null;
+                // An incoming socket proves its address, not its listening port.
+                var address = endpoint.Address.IsIPv4MappedToIPv6 ? endpoint.Address.MapToIPv4() : endpoint.Address;
+                return new(address, _connectionIsOutgoing ? endpoint.Port : null);
+            }
+        }
+    }
+
+    // Run UI-side activation/dispatch only while its original connection is
+    // still current. A replacement cannot slip between the check and action.
+    internal bool TryWithPeerSession(long session, Action action)
+    {
+        lock (_connectionLock)
+        {
+            if (_disposed || _writer is null || _peerDeviceId is null || session != _sessionGeneration) return false;
+            action();
+            return true;
+        }
+    }
+
     public string? CurrentPeerLabel
     {
         get
