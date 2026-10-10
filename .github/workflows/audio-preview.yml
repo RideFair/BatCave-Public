@@ -1,0 +1,48 @@
+name: Verify audio preview
+on:
+  push:
+    paths:
+      - 'Universal/Audio/**'
+      - 'Operating_System_Specific/Windows/Audio*/**'
+      - 'Operating_System_Specific/Windows/BatCaveWindowsAgent/DeviceIdentityStore.cs'
+      - 'Operating_System_Specific/Windows/BatCaveWindowsAgent/ApprovedPeerStore.cs'
+      - 'Operating_System_Specific/Windows/BatCaveWindowsAgent/SecurePeerTransport.cs'
+      - 'Directory.Build.props'
+      - '.github/workflows/audio-preview.yml'
+  pull_request:
+    paths:
+      - 'Universal/Audio/**'
+      - 'Operating_System_Specific/Windows/Audio*/**'
+      - 'Operating_System_Specific/Windows/BatCaveWindowsAgent/DeviceIdentityStore.cs'
+      - 'Operating_System_Specific/Windows/BatCaveWindowsAgent/ApprovedPeerStore.cs'
+      - 'Operating_System_Specific/Windows/BatCaveWindowsAgent/SecurePeerTransport.cs'
+      - 'Directory.Build.props'
+      - '.github/workflows/audio-preview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-audio:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build isolated audio GUI
+        run: dotnet build Operating_System_Specific/Windows/AudioPreview -c Release
+      - name: Routing and bounded mixer tests
+        run: dotnet run --project Operating_System_Specific/Windows/AudioCoreTests -c Release
+      - name: Native ABI and synthetic lifecycle tests
+        run: dotnet run --project Operating_System_Specific/Windows/AudioNativeTests -c Release
+      - name: Consent and coordinator tests
+        run: dotnet run --project Operating_System_Specific/Windows/AudioCoordinatorTests -c Release
+      - name: Authenticated audio transport tests
+        run: dotnet run --project Operating_System_Specific/Windows/AudioTransportTests -c Release
+      - name: Package portable preview without launching audio
+        shell: pwsh
+        run: ./Operating_System_Specific/Windows/AudioPreview/build-preview.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'batcave-audio-package')
