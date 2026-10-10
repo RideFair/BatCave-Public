@@ -14,6 +14,39 @@ from test_core import MemoryVault
 
 
 class TransportTests(unittest.TestCase):
+    def test_activation_and_dispatch_are_atomic_with_connection_stop(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b, StateDirectory(a) as sa, StateDirectory(b) as sb:
+            first = Identity.open(sa, MemoryVault(), "Source fixture")
+            second = Identity.open(sb, MemoryVault(), "Receiver fixture")
+            incoming = Inbox(); receiver = Connection(second, incoming); sender = Connection(first, Inbox())
+            release = threading.Event(); entered = threading.Event(); attempted = threading.Event(); stopped = threading.Event()
+            workers = []; dispatched = []
+            try:
+                epoch = receiver.listen(first.card, Bounds(0, 0, 800, 600), "127.0.0.1", 0)
+                sender.connect("127.0.0.1", second.card, Bounds(0, 0, 800, 600), receiver.bound_address[1])
+                self.await_events(incoming, "connected"); token = receiver.session_token
+                self.assertFalse(receiver.current(epoch, token + 1, lambda: dispatched.append("stale")))
+                receiver.approved = lambda _peer: False
+                self.assertFalse(receiver.current(epoch, token, lambda: dispatched.append("revoked")))
+                receiver.approved = lambda _peer: True
+                def action():
+                    entered.set(); release.wait(2)
+                    # Reentrant send is needed by source return-handoff dispatch.
+                    self.assertTrue(receiver.send("control.testStop", {}, epoch, connection_generation=token))
+                    dispatched.append(token)
+                dispatcher = threading.Thread(target=lambda: receiver.current(epoch, token, action), daemon=True)
+                def stop(): attempted.set(); receiver.stop(); stopped.set()
+                stopper = threading.Thread(target=stop, daemon=True); workers = [dispatcher, stopper]
+                dispatcher.start(); self.assertTrue(entered.wait(2)); stopper.start(); self.assertTrue(attempted.wait(2))
+                self.assertFalse(stopped.wait(0.05)); release.set()
+                for worker in workers: worker.join(2)
+                self.assertTrue(stopped.is_set()); self.assertEqual(dispatched, [token])
+                self.assertFalse(receiver.current(epoch, token, lambda: dispatched.append("late")))
+            finally:
+                release.set()
+                for worker in workers: worker.join(2)
+                receiver.stop(); sender.stop()
+
     @staticmethod
     def await_events(inbox, kind, timeout=5):
         events = []; deadline = time.monotonic() + timeout

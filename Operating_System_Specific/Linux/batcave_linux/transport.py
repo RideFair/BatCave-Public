@@ -71,7 +71,16 @@ class Connection:
         self.outgoing = collections.deque()
         self.outgoing_bytes = 0
         self.cancel = threading.Event()
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+
+    def current(self, epoch, generation, action):
+        """Dispatch/activate atomically with socket adoption, never via a stale UI."""
+        with self.lock:
+            if (epoch != self.epoch or generation != self.session_token or self.socket is None
+                    or self.cancel.is_set() or self.peer is None or not self.approved(self.peer)):
+                return False
+            action()
+            return True
 
     def connect(self, host, peer, bounds, port=47871, listen_port=None, listen_host="0.0.0.0"):
         address = ipaddress.ip_address(host)

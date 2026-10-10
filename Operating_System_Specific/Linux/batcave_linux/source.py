@@ -36,6 +36,7 @@ class SourceSession:
         self.keys = set(); self.buttons = set(); self.wheel = {}
         self.fraction = [0.0, 0.0]
         self.link = str(uuid.uuid4())
+        self.enable_generation = 0
 
     def connected(self, epoch, peer, remote):
         self.stop(notify=False, close_permission=False)
@@ -43,7 +44,7 @@ class SourceSession:
         self.connection_generation = getattr(remote, "connection_generation", None)
         self.last_activation = None
 
-    def start(self, edge):
+    def start(self, edge, authorize=None, activate=None):
         if self.epoch is None or self.peer is None or not self.portal.ready():
             raise RuntimeError("Link an approved computer and grant capture permission first.")
         if self.armed or self.pending_enable: return
@@ -52,10 +53,19 @@ class SourceSession:
         self.pending.clear(); self.pending_since = None
         self.pending_enable = True
         epoch = self.epoch
-        def enabled():
-            if self.epoch != epoch or not self.pending_enable: return
+        self.enable_generation += 1; generation = self.enable_generation
+        def finish():
+            if self.epoch != epoch or self.enable_generation != generation or not self.pending_enable: return
+            if authorize is not None and not authorize():
+                self.stop(notify=False)
+                self.changed("Sharing stays paused. Start again when ready.")
+                return
             self.pending_enable = False; self.armed = True
             self.changed("Sharing is ready. Cross the shared edge to use the other computer. F12 pauses sharing.")
+        def enabled():
+            if activate is None: finish()
+            elif not activate(finish) and self.enable_generation == generation:
+                self.stop(notify=False)
         self.portal.enable(edge, enabled)
 
     def _send(self, kind, payload):
@@ -183,6 +193,7 @@ class SourceSession:
             self.changed("The other computer paused sharing. Grant access to start again.")
 
     def stop(self, notify=True, close_permission=True):
+        self.enable_generation += 1
         try:
             if notify and self.epoch is not None and (self.owns_cursor or self.armed or self.pending_enable):
                 try: self.transport.send("control.testStop", {"reason": "Sharing paused"}, self.epoch,

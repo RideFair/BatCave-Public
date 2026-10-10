@@ -79,7 +79,7 @@ class Card:
         if cert.issuer != cert.subject:
             raise ValueError("A self-signed device identity is required.")
         key = cert.public_key()
-        if isinstance(key, rsa.RSAPublicKey) and key.key_size >= 3072:
+        if isinstance(key, rsa.RSAPublicKey) and 3072 <= key.key_size <= 8192:
             key.verify(cert.signature, cert.tbs_certificate_bytes, padding.PKCS1v15(), cert.signature_hash_algorithm)
         elif isinstance(key, ec.EllipticCurvePublicKey) and key.curve.name in {"secp256r1", "secp384r1"}:
             key.verify(cert.signature, cert.tbs_certificate_bytes, ec.ECDSA(cert.signature_hash_algorithm))
@@ -201,6 +201,10 @@ class Approvals:
                 self.cards[card.device_id] = card
 
     def approve(self, card):
+        Card.read(card.serialize())
+        previous = self.cards.get(card.device_id)
+        if previous is not None and previous.fingerprint != card.fingerprint:
+            raise ValueError("Remove the previously approved computer before replacing its identity.")
         if len(self.cards) >= 64 and card.device_id not in self.cards:
             raise ValueError("The approved peer limit is 64.")
         updated = dict(self.cards, **{card.device_id: card})

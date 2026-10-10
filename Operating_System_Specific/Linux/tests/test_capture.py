@@ -91,6 +91,38 @@ class Permission:
 
 @unittest.skipUnless((ROOT / ".build/libeis-capture-fixture.so").exists(), "Build the isolated capture fixture first")
 class CaptureTests(unittest.TestCase):
+    def test_old_enable_callback_cannot_arm_new_start_on_same_session(self):
+        permission = Permission(); callbacks = []
+        permission.enable = lambda _edge, callback: callbacks.append(callback)
+        source = SourceSession("linux:source-test", None, permission, lambda *_: None)
+        source.connected(1, object(), Bounds(0, 0, 800, 600)); source.start("right")
+        old = callbacks[-1]; source.stop(close_permission=False)
+        source.start("left"); old()
+        self.assertFalse(source.armed); self.assertTrue(source.pending_enable)
+        callbacks[-1](); self.assertTrue(source.armed); source.stop()
+
+    def test_delayed_enable_needs_live_initial_authorization(self):
+        permission = Permission(); callbacks = []
+        permission.enable = lambda _edge, callback: callbacks.append(callback)
+        source = SourceSession("linux:source-test", None, permission, lambda *_: None)
+        source.connected(1, object(), Bounds(0, 0, 800, 600))
+        authorized = True
+        source.start("right", authorize=lambda: authorized)
+        self.assertTrue(source.pending_enable); self.assertFalse(source.armed)
+        authorized = False; callbacks[0]()
+        self.assertFalse(source.pending_enable or source.armed); self.assertGreater(permission.closed, 0)
+
+    def test_old_enable_callback_cannot_arm_replacement_session(self):
+        permission = Permission(); callbacks = []
+        permission.enable = lambda _edge, callback: callbacks.append(callback)
+        source = SourceSession("linux:source-test", None, permission, lambda *_: None)
+        source.connected(1, object(), Bounds(0, 0, 800, 600)); source.start("right")
+        old = callbacks[-1]; source.disconnect()
+        permission = Permission(); permission.enable = lambda _edge, callback: callbacks.append(callback)
+        source.portal = permission; source.connected(2, object(), Bounds(0, 0, 800, 600)); source.start("left")
+        old(); self.assertFalse(source.armed); self.assertTrue(source.pending_enable)
+        callbacks[-1](); self.assertTrue(source.armed); source.stop()
+
     def test_real_capture_matches_activation_and_returns_balanced_input_over_tls(self):
         capture = CaptureFixture(); output = test_native.NativeTests(); output.setUp()
         self.addCleanup(capture.close); self.addCleanup(output.tearDown)

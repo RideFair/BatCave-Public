@@ -21,8 +21,8 @@ GNOME and KDE session support must be checked on the actual target installation;
 distribution name alone does not prove that its portal backend supports input.
 
 The app runs as your normal desktop user. It does not read raw input devices,
-use uinput, install a privileged daemon, change firewall rules or fall back to
-plaintext transport. Missing permissions or session services leave sharing disabled.
+use uinput, install a privileged daemon, change firewall rules or weaken the
+authenticated input transport. Missing permissions leave sharing disabled.
 WSL can run the tests and display GTK setup, but does not prove native Wayland
 permission, focus or lifecycle behavior.
 
@@ -36,14 +36,14 @@ sudo apt install build-essential pkg-config libei-dev libeis-dev python3 python3
 cd Operating_System_Specific/Linux
 sh scripts/test.sh
 sh scripts/package.sh
-sudo apt install ./.build/BatCave-Linux-0.2.2-amd64.deb
+sudo apt install ./.build/BatCave-Linux-0.3.0-amd64.deb
 ```
 
 Packaging requires a clean committed source tree. It creates a fresh stage,
 copies only tracked application source, and builds a Debian package for the
 current architecture. It appears in the application launcher as **BatCave**.
-This branch's app and Debian package version are **0.2.2**. Its build does not
-replace the frozen 0.2.1 candidate. The existing `batcave-linux-preview`
+This branch's app and Debian package version are **0.3.0**. Its build does not
+replace frozen 0.2.x candidates. The existing `batcave-linux-preview`
 package and command names remain for upgrade compatibility. Installing upgrades that package,
 separate from other BatCave installations. Per-user state stays under
 `$XDG_DATA_HOME/batcave/secure-preview`, defaulting to
@@ -61,38 +61,45 @@ dialogs still need testing. Only amd64 has been tested so far.
 
 ## Pair and share
 
-The Devices screen follows the Mac app's four steps: Permissions, Pair
-computers, Arrange screens and Link devices. Each step shows one primary action.
-Connection details remain optional, and Pause sharing stays accessible.
+The app opens to **Nearby computers**, just like Windows and Mac. Open BatCave
+on both devices, select a computer, compare all eight digits, then choose
+**Codes match · Link and share** on both screens. No connection file or network
+address is required. Names found on the network are untrusted until comparison
+and approval succeed. Changed saved pins require explicit removal first.
 
-In Permissions, choose **Receive input here** or **Use this keyboard and mouse**,
-then grant the desktop access for that role. Neither role selection nor consent
-starts sharing. In Pair computers, choose the other operating system and exchange
-connection files. Compare the complete SHA-256 fingerprint on the other computer
-before approving. The OS choice only changes instructions; it grants no trust.
-Private keys stay on their originating computers. Both peers must approve each other.
+The initiating computer supplies input; the other screen starts on its right.
+Permissions and screen arrangement are optional navigation. Linux requests the
+appropriate desktop portal consent when needed. Source control is unavailable
+on desktops without InputCapture support; the app explains how to choose receive
+input instead. Setup never bypasses an OS permission request.
 
-On Arrange screens, enter the other computer's local network address and choose
-**Connect securely**, or choose **Wait for the other computer**. The connector
-also accepts the selected approved peer on the same local port. Connection details
-lets you change the port; both computers must agree. The Linux GUI defaults to
-47870, matching current Windows. Only the selected approved peer can connect.
-When both computers initiate, the lower ordinal device ID's outgoing socket wins;
-replacement closes old ownership and requires fresh local input approval.
+Link-and-share consent remains in memory for at most 30 seconds. It applies only
+once, to the exact approved peer, pin and role on the first authenticated input
+session. It expires on navigation, Pause, role change, disconnect/replacement or
+lifecycle interruption. If permission takes longer, choose the explicit local
+sharing action after allowing access. Reconnect stays paused.
 
-Enable input on the receiver, then choose **Start sharing** on the source. Linux
-source control begins only when its compositor activates the configured left/right
-barrier and a matching EIS activation sequence arrives. F12 pauses source sharing.
-The source computes return crossings; target-away handoffs release receiving input.
-Linux uses the existing `<peerId>:desktop` target and existing v0 input messages.
-It sends no persistent `control.testStart`. Receiver handoff coordinates are
-materialized from the edge and normalized position in the current desktop.
-Native receiving input clamps to real regions, and source return placement avoids gaps.
+Nearby discovery uses bounded IPv4 multicast, without an Avahi dependency. The
+public-only TCP pairing listener actually closes on cancellation, loss of foreground
+Nearby, expiry, lock/sleep or shutdown. Proof and approval have separate signatures
+under the [shared contract](../../Universal/Protocol/Nearby_Pairing.md). Neither
+bootstrap nor discovery can dispatch input. Actual ports are announced; changed
+addresses are candidates for unchanged pinned mutual TLS, never replacements for
+trust. Only the lower ordinal device ID automatically connects; the other listens.
+Approved peers reconnect automatically when rediscovered, without rearming input.
+Blocked discovery has an explanation and Search again action. IPv6-only networks
+and isolated Wi-Fi cannot currently use this IPv4 discovery path.
 
-Pause, role changes and lifecycle interruptions release input and invalidate
-queued actions. Source Pause closes its capture grant, so starting again needs
-fresh desktop consent. Reconnect does not rearm either role. Saved setup retains
-preferences only. Linux does not automatically retry a lost connection yet.
+After sharing is active, Linux source control begins only on compositor barrier
+activation and the matching passive EIS sequence. F12 pauses capture. Return
+crossings release held receiving input; actual receiving regions and gaps are
+respected. The existing v0 input messages and `<peerId>:desktop` target remain.
+No persistent `control.testStart` is sent. Screen geometry authorized by the
+portal takes precedence; a changed connection cannot reuse initial consent.
+
+Preferences and existing identities survive upgrades, but consent is never saved.
+The local Files shelf remains available; network file transfer and shared audio
+are separate work and are not advertised by this pairing implementation.
 
 Physical keys and logical held modifiers use the existing Windows-format payloads.
 Boundary dragging, every international layout and lock-key state synchronization
@@ -162,3 +169,38 @@ identity and deletes its temporary Windows certificate and CNG key on exit.
 It times out after 30 seconds, sends no input and never opens an installed app's
 profile. Keep its exchange directory out of source archives. This optional test
 is separate from automated EIS/portal fixtures and live compositor verification.
+
+## Nearby pairing validation
+
+`scripts/test.sh` currently runs 66 distinct Linux regressions, including both
+isolated portal buses. Shared public vectors match the exact commitments,
+transcript, eight-digit code and RSA/ECDSA message signatures. Tests reject
+cross-stage replay and selected-identity substitution, and enforce cache/attempt
+bounds, cancellation, listener unbinding and existing-pin preservation.
+Connection adoption and input dispatch/activation share one lock. Capture Enable
+callbacks retain their request generation and cannot arm a replacement session or
+survive cancellation of initial sharing consent.
+
+Actual GTK fixtures check the approval actions and one-use receiver activation
+against an in-process EIS server. They also check delayed source enablement after
+navigation/expiry and a connected UI with no live transport. Twelve synthetic
+views are rendered at default and minimum sizes, without network traffic or an
+OS input grant. These are layout and action checks, not live desktop approval.
+
+`tests/pairing_interop` links the Windows reference protocol without editing it.
+Build `PairingInterop.csproj` on Windows with .NET 10. Run its DLL with an empty
+disposable exchange directory and an isolated interface address; run the adjacent
+Linux `linux_peer.py` with the same directory and address on `PYTHONPATH` containing
+this Linux source. The default has Linux initiate and Windows respond. For the
+opposite direction, add `connect` to the Windows invocation and `listen` to Linux,
+using the Linux interface address. Both directions independently passed matching
+code and mutual RSA/ECDSA approvals followed by pinned TLS 1.3. The fixture
+automatically simulates two local confirmation clicks after exact code comparison;
+it does not test the human comparison process. It binds ephemeral TCP ports,
+deletes its disposable Windows CNG identity and never touches an installed profile
+or imports a native input backend. Keep the exchange directory out of source.
+
+Multicast across physical computers, real foreground/lock/sleep behavior, fresh
+keyring and portal dialogs, and cross-platform input still require physical QA.
+IPv4 WSL socket fixtures do not establish those results. Version 0.3.0 is a review
+candidate; do not present it as a verified daily-use release.

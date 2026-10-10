@@ -23,6 +23,8 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Compile the optional Windows transport fixture
         run: dotnet build Operating_System_Specific/Linux/tests/windows_interop/WindowsInterop.csproj -c Release
+      - name: Compile the isolated nearby pairing and pinned TLS fixture
+        run: dotnet build Operating_System_Specific/Linux/tests/pairing_interop/PairingInterop.csproj -c Release
   ubuntu:
     runs-on: ubuntu-24.04
     steps:
@@ -44,7 +46,7 @@ jobs:
           PYTHONPATH: Operating_System_Specific/Linux:Operating_System_Specific/Linux/tests
         run: |
           mkdir -p /tmp/batcave-linux-screenshots
-          for view in permissions pair pair-receive pair-approved layout link files details details-approved pair-mac pair-linux source wait; do
+          for view in nearby nearby-selected nearby-approved nearby-blocked checking comparison approval-wait permissions layout link files details; do
             for size in default small; do
               args=()
               if [ "$size" = small ]; then args=(small); fi
@@ -64,8 +66,8 @@ jobs:
         run: |
           profile=$(mktemp -d /tmp/batcave-package-check.XXXXXXXX)
           export XDG_DATA_HOME="$profile"
-          sudo apt-get install -y ./Operating_System_Specific/Linux/.build/BatCave-Linux-0.2.2-amd64.deb
-          test "$(batcave-linux-preview --version)" = '0.2.2'
+          sudo apt-get install -y ./Operating_System_Specific/Linux/.build/BatCave-Linux-0.3.0-amd64.deb
+          test "$(batcave-linux-preview --version)" = '0.3.0'
           batcave-linux-preview --diagnose > /tmp/batcave-diagnose.json || test "$?" = 2
           test ! -e "$profile/batcave/secure-preview/identity.json"
           mkdir -p "$profile/batcave/secure-preview"
@@ -78,6 +80,6 @@ jobs:
         with:
           name: BatCave-Linux-amd64
           path: |
-            Operating_System_Specific/Linux/.build/BatCave-Linux-0.2.2-amd64.deb
+            Operating_System_Specific/Linux/.build/BatCave-Linux-0.3.0-amd64.deb
             Operating_System_Specific/Linux/.build/SHA256SUMS
           if-no-files-found: error

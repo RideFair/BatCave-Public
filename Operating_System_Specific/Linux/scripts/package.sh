@@ -6,7 +6,7 @@ if test -n "$(git -C "$root" status --porcelain)"; then
     exit 1
 fi
 sh "$root/scripts/build.sh"
-version=0.2.2
+version=0.3.0
 architecture=$(dpkg --print-architecture)
 filename="BatCave-Linux-${version}-${architecture}.deb"
 output="$root/.build"
