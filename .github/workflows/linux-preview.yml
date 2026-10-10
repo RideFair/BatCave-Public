@@ -64,8 +64,8 @@ jobs:
         run: |
           profile=$(mktemp -d /tmp/batcave-package-check.XXXXXXXX)
           export XDG_DATA_HOME="$profile"
-          sudo apt-get install -y ./Operating_System_Specific/Linux/.build/BatCave-Linux-0.2.0-amd64.deb
-          test "$(batcave-linux-preview --version)" = '0.2.0'
+          sudo apt-get install -y ./Operating_System_Specific/Linux/.build/BatCave-Linux-0.2.1-amd64.deb
+          test "$(batcave-linux-preview --version)" = '0.2.1'
           batcave-linux-preview --diagnose > /tmp/batcave-diagnose.json || test "$?" = 2
           test ! -e "$profile/batcave/secure-preview/identity.json"
           mkdir -p "$profile/batcave/secure-preview"
@@ -73,3 +73,11 @@ jobs:
           sudo apt-get remove -y batcave-linux-preview
           test ! -e /usr/bin/batcave-linux-preview
           test "$(cat "$profile/batcave/secure-preview/marker")" = 'retain existing user state'
+      - name: Upload Linux installer and checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: BatCave-Linux-amd64
+          path: |
+            Operating_System_Specific/Linux/.build/BatCave-Linux-0.2.1-amd64.deb
+            Operating_System_Specific/Linux/.build/SHA256SUMS
+          if-no-files-found: error
