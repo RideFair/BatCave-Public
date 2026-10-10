@@ -53,7 +53,7 @@ def require(condition, description):
 
 
 def notes_hash(body):
-    return hashlib.sha256(body.replace("\r\n", "\n").strip().encode()).hexdigest()
+    return hashlib.sha256(body.lstrip("\ufeff").replace("\r\n", "\n").strip().encode()).hexdigest()
 
 
 def main():
@@ -110,6 +110,9 @@ def main():
             "Staged release source differs from the reviewed commit.")
     require(isinstance(release.get("body"), str) and release["body"].strip(),
             "Existing release verification notes must be preserved.")
+    if notes_hash(release["body"]) not in NOTES_HASHES:
+        print("Stored release notes SHA-256: " + notes_hash(release["body"]), flush=True)
+        print("Stored release notes JSON: " + json.dumps(release["body"]), flush=True)
     require(notes_hash(release["body"]) in NOTES_HASHES,
             "Release notes differ from the reviewed notes.")
     verify_tag(allow_missing=release["draft"])
