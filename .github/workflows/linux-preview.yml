@@ -33,11 +33,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y build-essential pkg-config libei-dev libeis-dev \
-            python3-gi python3-cryptography gir1.2-gtk-4.0 gir1.2-secret-1 xvfb dbus-x11
+            python3-gi python3-cryptography gir1.2-gtk-4.0 gir1.2-secret-1 xvfb dbus-x11 pipewire pipewire-bin wireplumber
       - name: Native EIS, TLS, lifecycle state and filesystem checks
         run: sh Operating_System_Specific/Linux/scripts/test.sh
       - name: Source privacy gate
         run: python3 Scripts/check_public_source.py
+      - name: Isolated native PipeWire output-loss test
+        env:
+          PYTHONPATH: Operating_System_Specific/Linux
+          BATCAVE_TEST_PIPEWIRE: '1'
+        run: dbus-run-session -- python3 Operating_System_Specific/Linux/tests/pipewire_runtime.py
       - name: Render idle GTK setup without permission or networking
         env:
           GSK_RENDERER: cairo
