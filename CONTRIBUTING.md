@@ -69,7 +69,7 @@ sudo apt install git build-essential pkg-config libei-dev libeis-dev python3 \
 cd Operating_System_Specific/Linux
 sh scripts/test.sh
 sh scripts/package.sh
-sudo apt install ./.build/batcave-linux-preview_0.2.0~preview.2_amd64.deb
+sudo apt install ./.build/batcave-linux-preview_0.2.0_amd64.deb
 batcave-linux-preview --diagnose
 batcave-linux-preview
 ```
