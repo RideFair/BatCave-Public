@@ -46,3 +46,6 @@ approved-peers.json
 desktop-settings.json
 topology.secure.json
 MacOSAgent.conf
+
+monitor-layouts.json
+*.json.new

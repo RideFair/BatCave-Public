@@ -12,7 +12,7 @@ import sys
 
 root = Path(__file__).resolve().parents[1]
 private_names = {"identity.json", "approved-peers.json", "desktop-settings.json",
-                 "topology.secure.json", "topology.local.json", "MacOSAgent.conf"}
+                 "topology.secure.json", "topology.local.json", "MacOSAgent.conf", "monitor-layouts.json"}
 private_extensions = {".pfx", ".p12", ".pem", ".key", ".cer", ".crt", ".pdb", ".log"}
 private_directories = {"Coordination", "Codex_Backups", "Logs", "Releases", "bin", "obj", ".build", "Build"}
 patterns = {

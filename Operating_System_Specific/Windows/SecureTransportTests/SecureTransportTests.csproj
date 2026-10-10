@@ -13,6 +13,7 @@
     <Compile Include="../BatCaveWindowsAgent/LanBridgePeer.cs" Link="LanBridgePeer.cs" />
     <Compile Include="../BatCaveWindowsAgent/ProtocolMessages.cs" Link="ProtocolMessages.cs" />
     <Compile Include="../BatCaveWindowsAgent/VirtualDesktopBounds.cs" Link="VirtualDesktopBounds.cs" />
+    <Compile Include="../BatCaveWindowsAgent/MonitorLayout.cs" Link="MonitorLayout.cs" />
     <Compile Include="../BatCaveWindowsAgent/SecureTopology.cs" Link="SecureTopology.cs" />
     <Compile Include="../../../Universal/Topology/TopologyMap.cs" Link="TopologyMap.cs" />
   </ItemGroup>

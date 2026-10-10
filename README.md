@@ -25,6 +25,10 @@ secure interoperability with macOS remains a release gate.
 The [Mac guide](Operating_System_Specific/MacOS/README.md) describes the development
 build and its current limits. Shared routing code lives in `Universal/`.
 
+The [monitor arrangement guide](Docs/Monitor_Layout.md) covers Windows screen
+selection and saved layouts. File transfer with source-icon drag previews is
+[proposed](Universal/Protocol/File_Transfer_Proposal.md); it is not enabled yet.
+
 ## Security and privacy
 
 See [SECURITY.md](SECURITY.md) for the trust boundary and reporting guidance.

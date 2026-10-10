@@ -13,7 +13,7 @@ $project = Join-Path $repository 'Operating_System_Specific\Windows\BatCaveWindo
 $version = [string]$projectXml.Project.PropertyGroup.Version
 if ($version -notmatch '^\d+\.\d+\.\d+(?:-[a-z0-9.]+)?$') { throw 'Invalid package version' }
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
-foreach ($test in @('BridgeRegressionTests', 'SecureTransportTests', 'ModifierRegressionTests')) {
+foreach ($test in @('BridgeRegressionTests', 'SecureTransportTests', 'ModifierRegressionTests', 'TopologyRegressionTests')) {
     & $DotNet run --project (Join-Path $repository ('Operating_System_Specific\Windows\' + $test))
     if ($LASTEXITCODE -ne 0) { throw ('Regression checks failed: ' + $test) }
 }

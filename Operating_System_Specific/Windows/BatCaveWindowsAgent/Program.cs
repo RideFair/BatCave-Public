@@ -56,6 +56,7 @@ internal static class Program
         Console.WriteLine("  --app-backend [--port 47870]");
         Console.WriteLine();
 
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
@@ -104,7 +105,8 @@ internal static class Program
         {
             Directory.CreateDirectory(directory);
             using var consoleLog = InstallConsoleLog(Path.Combine(directory, "Logs"));
-            Application.EnableVisualStyles();
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             using var identity = DeviceIdentityStore.OpenOrCreate(directory);
             var approvals = new ApprovedPeerStore(directory);

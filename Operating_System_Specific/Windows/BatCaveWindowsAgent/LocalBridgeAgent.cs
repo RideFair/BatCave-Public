@@ -1072,6 +1072,8 @@ internal sealed class LocalBridgeAgent : Form
             return;
         }
 
+        if (_topologyPath is not null) return;
+
         string? edge = null;
         if (desiredX < _bounds.Left)
         {

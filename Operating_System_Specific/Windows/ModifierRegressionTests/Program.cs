@@ -10,6 +10,7 @@ internal static class ModifierRegression
     [STAThread]
     private static void Main(string[] args)
     {
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Run().GetAwaiter().GetResult();
@@ -23,11 +24,12 @@ internal static class ModifierRegression
         try
         {
             var approvals = new ApprovedPeerStore(directory);
-            using var window = new DesktopWindow(identity, approvals, directory);
+            using var window = new DesktopWindow(identity, approvals, directory, inspectionOnly: true);
             window.StartPosition = FormStartPosition.Manual;
             window.Location = new System.Drawing.Point(-30000, -30000);
             window.Show();
             Application.DoEvents();
+            Require(!((LocalBridgeAgent)Get(window, "_agent")).IsHandleCreated, "inspection renderer installs no input hooks");
             using var bitmap = new System.Drawing.Bitmap(window.Width, window.Height);
             window.DrawToBitmap(bitmap, new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height));
             bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);

@@ -5,7 +5,7 @@
   #define PackageDirectory "."
 #endif
 #ifndef AppVersion
-  #define AppVersion "0.2.0-preview.2"
+  #define AppVersion "0.2.0-preview.3"
 #endif
 
 [Setup]
@@ -31,7 +31,7 @@ RestartApplications=no
 DisableProgramGroupPage=yes
 
 [Files]
-Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Excludes: "*.pdb,*.log,*.pfx,*.p12,*.pem,*.key,*.batcave-peer.json,identity.json,approved-peers.json,desktop-settings.json,topology.secure.json"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Excludes: "*.pdb,*.log,*.pfx,*.p12,*.pem,*.key,*.batcave-peer.json,identity.json,approved-peers.json,desktop-settings.json,topology.secure.json,monitor-layouts.json,*.json.new"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\BatCave Secure Preview"; Filename: "{app}\BatCave.WindowsAgent.exe"; Parameters: "--desktop"

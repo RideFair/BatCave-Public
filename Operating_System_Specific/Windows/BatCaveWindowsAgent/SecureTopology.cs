@@ -5,36 +5,47 @@ namespace BatCave.WindowsAgent;
 
 internal static class SecureTopology
 {
-    // This profile is built only from local geometry and an authenticated peer's
-    // bounds. IDs come from approved cards; hostnames never select a trusted device.
     public static void Write(string path, string localId, VirtualDesktopBounds local, DeviceHelloPayload peer, bool peerOnRight)
+        => Write(path, localId, new[] { new MonitorDescriptor("desktop", "This computer", local) }, peer,
+            new("desktop", peerOnRight ? PeerSide.Right : PeerSide.Left));
+
+    public static void Write(string path, string localId, IReadOnlyList<MonitorDescriptor> monitors, DeviceHelloPayload peer, MonitorLayoutSettings settings)
     {
-        var remote = peer.VirtualDesktopBounds;
-        if (remote is null || remote.Width <= 0 || remote.Height <= 0 || remote.Width > 100000 || remote.Height > 100000)
-            throw new InvalidDataException("Invalid peer screen bounds.");
-        var localEdge = peerOnRight ? "right" : "left";
-        var remoteEdge = peerOnRight ? "left" : "right";
-        var localDisplay = localId + ":desktop";
+        if (string.IsNullOrWhiteSpace(localId) || string.IsNullOrWhiteSpace(peer.DeviceId) || localId == peer.DeviceId)
+            throw new InvalidDataException("Topology requires two different device identities.");
+        var scene = MonitorLayout.Build(monitors, peer.VirtualDesktopBounds, settings);
+        var remote = scene.Remote.Bounds;
+        var localDisplay = localId + ":" + scene.Local.Id;
         var remoteDisplay = peer.DeviceId + ":desktop";
-        // A separate virtual rectangle avoids conflating Windows and Mac native
-        // coordinate origins. Mac handoff uses normalized targetPosition.
-        var remoteLeft = peerOnRight ? local.Right + 1 : local.Left - remote.Width;
-        var remoteBounds = new VirtualDesktopBounds(remoteLeft, local.Top, remote.Width, remote.Height);
         object Selection(string id, string edge, double position) => new { displayId = id, edge, position };
+        object Display(string id, string device, string label, VirtualDesktopBounds bounds)
+            => new { id, deviceId = device, label, kind = "desktop", bounds = ScreenBounds.From(bounds) };
+        var displays = monitors.Select(m => Display(localId + ":" + m.Id, localId, m.Label, m.Bounds)).ToList();
+        displays.Add(Display(remoteDisplay, peer.DeviceId, "Other computer", remote));
+        var localAxis = scene.VerticalEdge ? scene.Local.Bounds.Top : scene.Local.Bounds.Left;
+        var localLength = (scene.VerticalEdge ? scene.Local.Bounds.Height : scene.Local.Bounds.Width) - 1;
+        var peerAxis = scene.VerticalEdge ? remote.Top : remote.Left;
+        var peerLength = (scene.VerticalEdge ? remote.Height : remote.Width) - 1;
         var profile = new
         {
-            schema = "batcave.topology.v1",
-            displays = new[]
+            schema = "batcave.topology.v1", displays,
+            links = scene.Seams.Select((s, i) => new
             {
-                new { id = localDisplay, deviceId = localId, label = "This computer", kind = "desktop", bounds = ScreenBounds.From(local) },
-                new { id = remoteDisplay, deviceId = peer.DeviceId, label = peer.DeviceName, kind = "desktop", bounds = ScreenBounds.From(remoteBounds) }
-            },
-            links = new[] { new { id = "secure-desktop-bridge",
-                from = new { start = Selection(localDisplay, localEdge, 0), end = Selection(localDisplay, localEdge, 1) },
-                to = new { start = Selection(remoteDisplay, remoteEdge, 0), end = Selection(remoteDisplay, remoteEdge, 1) } } }
+                id = "secure-monitor-bridge-" + i,
+                from = new { start = Selection(localDisplay, scene.LocalEdge, (s.Start - localAxis) / localLength),
+                    end = Selection(localDisplay, scene.LocalEdge, (s.End - localAxis) / localLength) },
+                to = new { start = Selection(remoteDisplay, scene.RemoteEdge, (s.Start - peerAxis) / peerLength),
+                    end = Selection(remoteDisplay, scene.RemoteEdge, (s.End - peerAxis) / peerLength) }
+            })
         };
-        File.WriteAllText(path + ".new", JsonSerializer.Serialize(profile, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
-        File.Move(path + ".new", path, overwrite: true);
-        if (!TopologyMap.TryLoad(path, localId, out _, out _)) { throw new InvalidDataException("Generated topology is invalid."); }
+        var temporary = path + ".new";
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(profile, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+            if (!TopologyMap.TryLoad(temporary, localId, out var map, out _) || map is null || !map.HasLocalSourceLinks(localId))
+                throw new InvalidDataException("Generated topology is invalid.");
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 }

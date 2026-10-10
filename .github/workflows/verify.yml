@@ -39,6 +39,8 @@ jobs:
         run: dotnet run --project Operating_System_Specific/Windows/SecureTransportTests -c Release
       - name: Modifier regressions
         run: dotnet run --project Operating_System_Specific/Windows/ModifierRegressionTests -c Release
+      - name: Monitor routing and persistence
+        run: dotnet run --project Operating_System_Specific/Windows/TopologyRegressionTests -c Release
       - name: Dependency advisory check
         shell: pwsh
         run: |

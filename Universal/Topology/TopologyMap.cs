@@ -47,18 +47,33 @@ internal sealed class TopologyMap
 
         try
         {
+            if (new FileInfo(path).Length > 262144) throw new InvalidDataException("Topology exceeds 256 KiB.");
             using var document = JsonDocument.Parse(File.ReadAllText(path));
             var root = document.RootElement;
+            if (!root.TryGetProperty("schema", out var schema) || schema.GetString() != "batcave.topology.v1")
+                throw new InvalidDataException("Unknown topology schema.");
             var displays = ReadDisplays(root);
+            if (displays.Count is < 2 or > 64 || !displays.Any(d => d.DeviceId == localDeviceId)
+                || displays.Select(d => d.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count() != displays.Count)
+                throw new InvalidDataException("Invalid topology display inventory.");
+            foreach (var display in displays)
+            {
+                var b = display.Bounds;
+                if (b.Width < 2 || b.Height < 2 || b.Width > 100000 || b.Height > 100000
+                    || Math.Abs((long)b.Left) > 1000000 || Math.Abs((long)b.Top) > 1000000
+                    || (long)b.Left + b.Width - 1 != b.Right || (long)b.Top + b.Height - 1 != b.Bottom)
+                    throw new InvalidDataException("Invalid topology display bounds.");
+            }
             var displayLookup = displays.ToDictionary(display => display.Id, StringComparer.OrdinalIgnoreCase);
             var links = ReadLinks(root, displayLookup);
+            if (links.Count is < 1 or > 128) throw new InvalidDataException("Invalid topology links.");
 
             topology = new TopologyMap(path, localDeviceId, displays, links);
             var localSourceLinks = topology.LocalSourceLinks(localDeviceId).Count();
             status = $"topology=loaded path={path} displays={displays.Count} links={links.Count} localSourceLinks={localSourceLinks}";
             return true;
         }
-        catch (Exception ex) when (ex is IOException or JsonException or InvalidOperationException or KeyNotFoundException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or InvalidOperationException or KeyNotFoundException or ArgumentException or FormatException or OverflowException)
         {
             status = $"topology=invalid path={path} error={ex.Message}";
             return false;
@@ -226,6 +241,14 @@ internal sealed class TopologyMap
             var fromEnd = ReadSelection(from.GetProperty("end"));
             var toStart = ReadSelection(to.GetProperty("start"));
             var toEnd = ReadSelection(to.GetProperty("end"));
+            foreach (var side in new[] { (fromStart, fromEnd), (toStart, toEnd) })
+            {
+                if (side.Item1.Edge != side.Item2.Edge || displays[side.Item1.DisplayId].DeviceId != displays[side.Item2.DisplayId].DeviceId
+                    || side.Item1 == side.Item2)
+                    throw new InvalidDataException("Invalid topology link side.");
+            }
+            if (displays[fromStart.DisplayId].DeviceId == displays[toStart.DisplayId].DeviceId)
+                throw new InvalidDataException("Topology links must connect different devices.");
             links.Add(
                 new MaterializedLink(
                     ReadString(link, "id"),
@@ -246,10 +269,11 @@ internal sealed class TopologyMap
 
     private static TopologyEdgeSelection ReadSelection(JsonElement selection)
     {
-        return new TopologyEdgeSelection(
-            ReadRequiredString(selection, "displayId"),
-            ReadRequiredString(selection, "edge").ToLowerInvariant(),
-            ReadDouble(selection, "position"));
+        var edge = ReadRequiredString(selection, "edge").ToLowerInvariant();
+        var position = ReadDouble(selection, "position");
+        if (edge is not ("left" or "right" or "top" or "bottom") || !double.IsFinite(position) || position < 0 || position > 1)
+            throw new InvalidDataException("Invalid topology edge selection.");
+        return new TopologyEdgeSelection(ReadRequiredString(selection, "displayId"), edge, position);
     }
 
     private static TopologyEdgeSelection InterpolateSelection(
@@ -277,10 +301,10 @@ internal sealed class TopologyMap
         position = Math.Clamp(position, 0, 1);
         return edge switch
         {
-            "left" => new Point2D(display.Bounds.Left, display.Bounds.Top + (display.Bounds.Height * position)),
-            "right" => new Point2D(display.Bounds.Right, display.Bounds.Top + (display.Bounds.Height * position)),
-            "top" => new Point2D(display.Bounds.Left + (display.Bounds.Width * position), display.Bounds.Top),
-            "bottom" => new Point2D(display.Bounds.Left + (display.Bounds.Width * position), display.Bounds.Bottom),
+            "left" => new Point2D(display.Bounds.Left, display.Bounds.Top + ((display.Bounds.Height - 1) * position)),
+            "right" => new Point2D(display.Bounds.Right, display.Bounds.Top + ((display.Bounds.Height - 1) * position)),
+            "top" => new Point2D(display.Bounds.Left + ((display.Bounds.Width - 1) * position), display.Bounds.Top),
+            "bottom" => new Point2D(display.Bounds.Left + ((display.Bounds.Width - 1) * position), display.Bounds.Bottom),
             _ => throw new InvalidOperationException($"Unknown topology edge: {edge}")
         };
     }
@@ -572,10 +596,10 @@ internal readonly record struct MaterializedSide(
         position = Math.Clamp(position, 0, 1);
         return edge switch
         {
-            "left" => new Point2D(display.Bounds.Left, display.Bounds.Top + (display.Bounds.Height * position)),
-            "right" => new Point2D(display.Bounds.Right, display.Bounds.Top + (display.Bounds.Height * position)),
-            "top" => new Point2D(display.Bounds.Left + (display.Bounds.Width * position), display.Bounds.Top),
-            "bottom" => new Point2D(display.Bounds.Left + (display.Bounds.Width * position), display.Bounds.Bottom),
+            "left" => new Point2D(display.Bounds.Left, display.Bounds.Top + ((display.Bounds.Height - 1) * position)),
+            "right" => new Point2D(display.Bounds.Right, display.Bounds.Top + ((display.Bounds.Height - 1) * position)),
+            "top" => new Point2D(display.Bounds.Left + ((display.Bounds.Width - 1) * position), display.Bounds.Top),
+            "bottom" => new Point2D(display.Bounds.Left + ((display.Bounds.Width - 1) * position), display.Bounds.Bottom),
             _ => throw new InvalidOperationException($"Unknown topology edge: {edge}")
         };
     }
