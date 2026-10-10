@@ -33,7 +33,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y build-essential pkg-config libei-dev libeis-dev \
-            python3-gi python3-cryptography gir1.2-gtk-4.0 gir1.2-secret-1 xvfb dbus-x11
+            python3-gi python3-cryptography gir1.2-gtk-4.0 gir1.2-secret-1 libxkbcommon0 xkb-data xvfb dbus-x11
       - name: Native EIS, TLS, lifecycle state and filesystem checks
         run: sh Operating_System_Specific/Linux/scripts/test.sh
       - name: Source privacy gate
@@ -44,7 +44,7 @@ jobs:
           PYTHONPATH: Operating_System_Specific/Linux:Operating_System_Specific/Linux/tests
         run: |
           mkdir -p /tmp/batcave-linux-screenshots
-          for view in permissions pair pair-receive pair-approved layout link files details details-approved; do
+          for view in permissions pair pair-receive pair-approved layout link files details details-approved pair-mac pair-linux source wait; do
             for size in default small; do
               args=()
               if [ "$size" = small ]; then args=(small); fi
@@ -64,8 +64,8 @@ jobs:
         run: |
           profile=$(mktemp -d /tmp/batcave-package-check.XXXXXXXX)
           export XDG_DATA_HOME="$profile"
-          sudo apt-get install -y ./Operating_System_Specific/Linux/.build/BatCave-Linux-0.2.1-amd64.deb
-          test "$(batcave-linux-preview --version)" = '0.2.1'
+          sudo apt-get install -y ./Operating_System_Specific/Linux/.build/BatCave-Linux-0.2.2-amd64.deb
+          test "$(batcave-linux-preview --version)" = '0.2.2'
           batcave-linux-preview --diagnose > /tmp/batcave-diagnose.json || test "$?" = 2
           test ! -e "$profile/batcave/secure-preview/identity.json"
           mkdir -p "$profile/batcave/secure-preview"
@@ -78,6 +78,6 @@ jobs:
         with:
           name: BatCave-Linux-amd64
           path: |
-            Operating_System_Specific/Linux/.build/BatCave-Linux-0.2.1-amd64.deb
+            Operating_System_Specific/Linux/.build/BatCave-Linux-0.2.2-amd64.deb
             Operating_System_Specific/Linux/.build/SHA256SUMS
           if-no-files-found: error

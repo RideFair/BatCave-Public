@@ -17,6 +17,11 @@ class SetupState:
     connected: bool = False
     armed: bool = False
     pair_import_ready: bool = False
+    source: bool = False
+    listen: bool = False
+    permission_supported: bool = True
+    enable_pending: bool = False
+    peer_os: str = "Windows"
 
 
 @dataclass(frozen=True)
@@ -32,15 +37,16 @@ def primary_action(step, state):
     if step == 0:
         if state.permission_ready and state.desktop_ready: return Action("Continue", "next")
         if state.permission_pending: return Action("Waiting for permission…", "none", False)
-        return Action("Grant access", "grant", state.desktop_ready)
+        return Action("Grant access", "grant", state.desktop_ready and state.permission_supported)
     if step == 1:
         if state.peer_selected: return Action("Continue", "next")
-        return Action("Add Windows computer", "import") if state.pair_import_ready else Action("Save Linux file…", "export")
+        return Action("Add " + state.peer_os + " computer", "import") if state.pair_import_ready else Action("Save Linux file…", "export")
     if state.armed: return Action("Pause sharing", "pause")
     if not state.permission_ready or not state.desktop_ready:
         if state.permission_pending: return Action("Waiting for permission…", "none", False)
-        return Action("Grant access", "permission", state.desktop_ready)
+        return Action("Grant access", "permission", state.desktop_ready and state.permission_supported)
     if not state.peer_selected: return Action("Pair computers", "pair")
-    if state.connected: return Action("Link devices", "next") if step == 2 else Action("Enable Linux input", "start")
+    if state.enable_pending: return Action("Starting sharing…", "none", False)
+    if state.connected: return Action("Link devices", "next") if step == 2 else Action("Start sharing" if state.source else "Enable Linux input", "start")
     if state.connecting: return Action("Linking devices…", "none", False)
-    return Action("Connect securely" if step == 2 else "Reconnect", "connect", state.address_valid)
+    return Action("Wait for computer" if state.listen else "Connect securely" if step == 2 else "Reconnect", "connect", state.listen or state.address_valid)

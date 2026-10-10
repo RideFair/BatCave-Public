@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using BatCave.WindowsAgent;
 
-if (args.Length != 2 || !IPAddress.TryParse(args[1], out var address))
+if (args.Length is < 2 or > 3 || !IPAddress.TryParse(args[1], out var address))
     throw new ArgumentException("Supply a disposable exchange directory and a local WSL host address.");
 var exchange = Path.GetFullPath(args[0]);
 if (!Directory.Exists(exchange) || Directory.EnumerateFileSystemEntries(exchange).Any())
@@ -15,19 +15,32 @@ using var identity = DeviceIdentityStore.OpenOrCreate(identityDirectory);
 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 var listener = new TcpListener(address, 0);
+var outgoing = args.Length == 3 && args[2] == "connect";
 try
 {
     File.WriteAllText(Path.Combine(exchange, "windows-card.json"),
         DeviceIdentityStore.SerializePublicCard(identity.ExportPublicCard("Windows interoperability fixture")));
-    listener.Start(1);
-    File.WriteAllText(Path.Combine(exchange, "ready.json.partial"),
-        JsonSerializer.Serialize(new { port = ((IPEndPoint)listener.LocalEndpoint).Port }, jsonOptions));
-    File.Move(Path.Combine(exchange, "ready.json.partial"), Path.Combine(exchange, "ready.json"));
+    if (!outgoing)
+    {
+        listener.Start(1);
+        File.WriteAllText(Path.Combine(exchange, "ready.json.partial"),
+            JsonSerializer.Serialize(new { port = ((IPEndPoint)listener.LocalEndpoint).Port }, jsonOptions));
+        File.Move(Path.Combine(exchange, "ready.json.partial"), Path.Combine(exchange, "ready.json"));
+    }
     var clientCard = Path.Combine(exchange, "linux-card.json");
     while (!File.Exists(clientCard)) await Task.Delay(20, timeout.Token);
     var peer = DeviceIdentityStore.ReadPublicCard(File.ReadAllText(clientCard));
-    using var socket = await listener.AcceptTcpClientAsync(timeout.Token);
-    using var stream = await SecurePeerTransport.AuthenticateServerAsync(socket, identity.Certificate, peer, timeout.Token);
+    using var socket = outgoing ? new TcpClient(address.AddressFamily) : await listener.AcceptTcpClientAsync(timeout.Token);
+    if (outgoing)
+    {
+        var ready = Path.Combine(exchange, "linux-ready.json");
+        while (!File.Exists(ready)) await Task.Delay(20, timeout.Token);
+        using var settings = JsonDocument.Parse(File.ReadAllText(ready));
+        await socket.ConnectAsync(address, settings.RootElement.GetProperty("port").GetInt32(), timeout.Token);
+    }
+    using var stream = outgoing
+        ? await SecurePeerTransport.AuthenticateClientAsync(socket, identity.Certificate, peer, timeout.Token)
+        : await SecurePeerTransport.AuthenticateServerAsync(socket, identity.Certificate, peer, timeout.Token);
     var frame = await new BoundedFrameReader(stream).ReadAsync(timeout.Token) ?? throw new InvalidDataException("Missing hello");
     using var message = JsonDocument.Parse(frame);
     var value = message.RootElement;
@@ -43,7 +56,7 @@ try
     await stream.WriteAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(hello, jsonOptions) + "\n"), timeout.Token);
     await stream.FlushAsync(timeout.Token);
     await Task.Delay(500, timeout.Token);
-    Console.WriteLine("PASS: Windows CNG/SChannel accepted the Linux P-256 client and identity-bound hello over mutual TLS 1.3.");
+    Console.WriteLine("PASS: Windows CNG/SChannel and Linux/OpenSSL verified pinned mutual TLS 1.3 and identity-bound hello in " + (outgoing ? "Windows-connect" : "Windows-listen") + " direction.");
 }
 finally
 {

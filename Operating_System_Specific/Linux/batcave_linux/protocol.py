@@ -100,26 +100,47 @@ def decode(data, peer_id):
 class FrameReader:
     def __init__(self):
         self.buffer = bytearray()
+        self.segments = []
+        self.last_generation = None
 
-    def read(self, stream, cancelled=lambda: False):
+    def read(self, stream, cancelled=lambda: False, generation=lambda: None):
         while not cancelled():
-            newline = self.buffer.find(b"\n")
-            if newline >= 0:
-                if newline > MAX_FRAME:
-                    raise ValueError("Inbound frame exceeds 256 KiB.")
-                result = bytes(self.buffer[:newline])
-                del self.buffer[:newline + 1]
-                return result
-            if len(self.buffer) > MAX_FRAME:
-                raise ValueError("Inbound frame exceeds 256 KiB.")
+            result = self.take()
+            if result is not None: return result
             try:
+                token = generation()
                 data = stream.recv(min(16384, MAX_FRAME + 1 - len(self.buffer)))
             except socket.timeout:
                 continue
             if not data:
                 raise EOFError("Peer disconnected.")
-            self.buffer.extend(data)
+            self.feed(data, token)
         raise EOFError("Connection stopped.")
+
+    def take(self):
+        newline = self.buffer.find(b"\n")
+        if newline >= 0:
+            if newline > MAX_FRAME: raise ValueError("Inbound frame exceeds 256 KiB.")
+            result = bytes(self.buffer[:newline]); del self.buffer[:newline + 1]
+            self.last_generation = self.segments[0][1] if self.segments else None
+            consumed = newline + 1
+            while self.segments and consumed:
+                length, token = self.segments[0]
+                if length <= consumed:
+                    consumed -= length; self.segments.pop(0)
+                else:
+                    self.segments[0] = (length - consumed, token); consumed = 0
+            return result
+        if len(self.buffer) > MAX_FRAME: raise ValueError("Inbound frame exceeds 256 KiB.")
+        return None
+
+    def feed(self, data, generation=None):
+        self.buffer.extend(data)
+        if data:
+            if self.segments and self.segments[-1][1] == generation:
+                length, token = self.segments[-1]; self.segments[-1] = (length + len(data), token)
+            else: self.segments.append((len(data), generation))
+        if len(self.segments) > 4096: raise ValueError("Fragment generation limit exceeded.")
 
 
 def hello(identity, bounds):

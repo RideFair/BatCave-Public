@@ -1,9 +1,9 @@
 # BatCave for Linux
 
-This branch adds a Linux receiver for a Windows-controlled BatCave session.
-The network and native input code run on Linux, and automated tests exercise
-real mutual TLS and the real libei protocol against an isolated EIS service.
-A supported live desktop and Windows/Linux input crossings still need testing.
+Linux can select a Windows, Mac or Linux peer and serve as input source or
+receiver. Both connection directions use pinned mutual TLS 1.3. Automated tests
+route passive libei compositor events over real Linux/Linux sockets into isolated
+native receiving devices. Physical desktop permissions and crossings still need testing.
 The Windows CNG/SChannel transport and Linux/OpenSSL client passed a real mutual
 TLS 1.3 handshake and identity-bound hello exchange through a local WSL interface.
 This build remains under development. A verified daily-use Linux release still
@@ -12,8 +12,11 @@ requires the live desktop checks below.
 ## Desktop requirements
 
 Initial target: Ubuntu 24.04 or a compatible distribution with Python 3.12+,
-GTK 4.12+, libei 1.2+, a desktop Secret Service keyring and a RemoteDesktop portal
-version 2 that grants keyboard and pointer devices through `ConnectToEIS`.
+GTK 4.12+, libei 1.2+ and a desktop Secret Service keyring. Receiving requires
+RemoteDesktop portal version 2 with authorized keyboard and pointer devices.
+Using Linux's keyboard and mouse requires InputCapture portal version 1 or 2,
+relative pointer capture and keyboard modifier maps through passive `ConnectToEIS`.
+The source action remains unavailable when its prerequisites are absent.
 GNOME and KDE session support must be checked on the actual target installation;
 distribution name alone does not prove that its portal backend supports input.
 
@@ -33,15 +36,15 @@ sudo apt install build-essential pkg-config libei-dev libeis-dev python3 python3
 cd Operating_System_Specific/Linux
 sh scripts/test.sh
 sh scripts/package.sh
-sudo apt install ./.build/BatCave-Linux-0.2.1-amd64.deb
+sudo apt install ./.build/BatCave-Linux-0.2.2-amd64.deb
 ```
 
 Packaging requires a clean committed source tree. It creates a fresh stage,
 copies only tracked application source, and builds a Debian package for the
 current architecture. It appears in the application launcher as **BatCave**.
-App and Debian package version are **0.2.1**. The existing `batcave-linux-preview`
-package and command names remain for upgrade compatibility. Version 0.2.1 sorts
-above 0.2.0 and prior prerelease versions in Debian. Installing it upgrades that package,
+This branch's app and Debian package version are **0.2.2**. Its build does not
+replace the frozen 0.2.1 candidate. The existing `batcave-linux-preview`
+package and command names remain for upgrade compatibility. Installing upgrades that package,
 separate from other BatCave installations. Per-user state stays under
 `$XDG_DATA_HOME/batcave/secure-preview`, defaulting to
 `~/.local/share/batcave/secure-preview`. Removal leaves identity and approvals
@@ -62,54 +65,39 @@ The Devices screen follows the Mac app's four steps: Permissions, Pair
 computers, Arrange screens and Link devices. Each step shows one primary action.
 Connection details remain optional, and Pause sharing stays accessible.
 
-Grant Linux desktop access when prompted. In **Pair computers**, choose **Save
-Linux file** and send that connection file to Windows by email or USB. In BatCave
-on Windows, choose **Add computer** to import it and approve the full SHA-256
-fingerprint shown in Linux's Connection details. Save the Windows connection file
-from that same Windows screen and send it to Linux. Choose **Add Windows
-computer** on Linux and approve its full fingerprint after comparing it with
-Windows's **Address & security details**. Saving the Linux file advances the
-instructions only after the save succeeds; canceling leaves the first action in
-place. **I already have the Windows file** skips directly to importing, without
-granting trust. The approved-computer selector appears only after
-a computer has been approved. Connection files contain public identity information;
-private keys stay on their originating computers.
+In Permissions, choose **Receive input here** or **Use this keyboard and mouse**,
+then grant the desktop access for that role. Neither role selection nor consent
+starts sharing. In Pair computers, choose the other operating system and exchange
+connection files. Compare the complete SHA-256 fingerprint on the other computer
+before approving. The OS choice only changes instructions; it grants no trust.
+Private keys stay on their originating computers. Both peers must approve each other.
 
-Windows 0.2.0 uses the older labels **Save Windows card**, **Import device card**
-and **Connection details** for those same actions. The file format remains
-compatible; the Linux screen includes an optional help note for that version.
+On Arrange screens, enter the other computer's local network address and choose
+**Connect securely**, or choose **Wait for the other computer**. The connector
+also accepts the selected approved peer on the same local port. Connection details
+lets you change the port; both computers must agree. The Linux GUI defaults to
+47870, matching current Windows. Only the selected approved peer can connect.
+When both computers initiate, the lower ordinal device ID's outgoing socket wins;
+replacement closes old ownership and requires fresh local input approval.
 
-Copy Windows's local network address from **Pair computers** or **Address & security
-details** (Connection details in Windows 0.2.0). On Linux,
-enter it in the **Windows address** field on Arrange screens; both computers need
-the same home or office network. Choose **Connect securely**. Continue to
-Link devices and choose **Enable Linux input**, then **Start sharing** on Windows.
-Connecting and saving setup leave input paused until you enable it.
-A fresh Windows handoff is required after enablement or reconnection.
-BatCave remembers the last chosen peer and address; it never saves permission
-to enable input automatically.
+Enable input on the receiver, then choose **Start sharing** on the source. Linux
+source control begins only when its compositor activates the configured left/right
+barrier and a matching EIS activation sequence arrives. F12 pauses source sharing.
+The source computes return crossings; target-away handoffs release receiving input.
+Linux uses the existing `<peerId>:desktop` target and existing v0 input messages.
+It sends no persistent `control.testStart`. Receiver handoff coordinates are
+materialized from the edge and normalized position in the current desktop.
+Native receiving input clamps to real regions, and source return placement avoids gaps.
 
-Windows owns the shared monitor layout. Linux announces the coordinate regions
-provided by its authorized input service, derives inclusive bounds from their
-size and clamps movement to actual regions rather than empty monitor gaps.
-The peer target remains `<approved-deviceId>:desktop`; no new shared layout or
-hello extension is required. A return handoff releases held input immediately.
-The Arrange screens diagram shows each computer as one desktop. Its left/right
-choice is a saved guide to match on Windows; it does not modify the Windows
-layout or imply control of individual monitors. Verified dimensions appear only
-after desktop access and a secure hello. Save setup retains the chosen side,
-approved peer and address without saving permission to activate input.
+Pause, role changes and lifecycle interruptions release input and invalidate
+queued actions. Source Pause closes its capture grant, so starting again needs
+fresh desktop consent. Reconnect does not rearm either role. Saved setup retains
+preferences only. Linux does not automatically retry a lost connection yet.
 
-Pause disconnects and balances held keys/buttons. Desktop permission revocation,
-input-device replacement, screen lock, sleep and application exit also stop
-sharing. BatCave does not automatically reconnect or re-enable input.
-Physical keyboard scan codes use the Linux desktop's active keyboard layout;
-arbitrary Unicode text injection and every international layout are unverified.
-Clipboard sharing is currently disabled on Linux.
-
-Linux-controlled Windows is a separate milestone: Windows currently drives the
-input session. A Linux controller needs InputCapture portal support and matching
-Windows receiver behavior before it can be claimed as supported.
+Physical keys and logical held modifiers use the existing Windows-format payloads.
+Boundary dragging, every international layout and lock-key state synchronization
+remain physical QA gates. Clipboard sharing is disabled. Linux source control
+requires a peer version with receiving behavior; older Windows releases only source input.
 
 ## Files and source icons
 
@@ -148,8 +136,8 @@ TLS is restricted to version 1.3, requires client and server certificates and
 trusts only the approved leaf. A separate constant-time SHA-256 check enforces
 the pin; certificate validity and the five-second hello bind the device ID.
 Frames are bounded to 256 KiB and the input queue to 512 frames/1 MiB; overflow
-disconnects and discards queued input. Session generations prevent old callbacks
-from reviving input after disconnect. Keys, clipboard, certificates, tickets and
+disconnects and discards queued input. Socket and local enable generations prevent old callbacks
+from reviving input after disconnect or Pause. Keys, clipboard, certificates, tickets and
 local addresses are not logged. Startup disables core dumps.
 
 Before a release, test a real supported desktop's consent/revocation, keyboard

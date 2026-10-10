@@ -35,6 +35,7 @@ class InputSession:
         self.local_id = local_id
         self.backend = backend
         self.epoch = None
+        self.generation = 0
         self.armed = False
         self.owns_cursor = False
         self.keys = set()
@@ -54,7 +55,11 @@ class InputSession:
         self.armed = True
 
     def pause(self):
+        self.generation += 1
         self.armed = False
+        return self._release()
+
+    def _release(self):
         self.owns_cursor = False
         errors = []
         for key in tuple(self.keys):
@@ -82,8 +87,8 @@ class InputSession:
         self.pause()
         self.epoch = None
 
-    def handle(self, epoch, message):
-        if epoch != self.epoch or not self.armed:
+    def handle(self, epoch, message, generation=None):
+        if epoch != self.epoch or not self.armed or generation is not None and generation != self.generation:
             return
         kind, payload = message["type"], message["payload"]
         if kind == "control.testStop":
@@ -92,7 +97,7 @@ class InputSession:
         if kind == "cursor.handoff":
             # Every handoff ends previous ownership before it can grant a new one.
             enabled = self.armed
-            cleaned = self.pause()
+            cleaned = self._release()
             self.armed = enabled and cleaned
             if not self.armed:
                 return
@@ -101,6 +106,11 @@ class InputSession:
             if payload.get("targetDisplayId") != self.local_id + ":desktop":
                 raise ValueError("BatCave for Linux requires an aggregate desktop handoff.")
             position = number(payload.get("targetPosition"), 0, 1)
+            # Coordinates describe the source's arranged topology, not this
+            # compositor's physical coordinates. Validate limits, then map the edge.
+            for coordinate in ("targetX", "targetY", "sourceX", "sourceY"):
+                if coordinate in payload:
+                    integer(payload[coordinate], -1000000, 1000000)
             self.cursor = self.bounds.point(payload.get("targetEdge"), position)
             self.backend.start()
             self.cursor = self.backend.move(*self.cursor)

@@ -16,6 +16,9 @@ from batcave_linux.storage import StateDirectory
 from batcave_linux.protocol import Bounds
 from test_core import MemoryVault
 from test_native import NativeTests
+from test_capture import CaptureFixture
+from batcave_linux.capture_portal import CapturePortal
+from batcave_linux.source import SourceSession
 
 root = Path(__file__).resolve().parents[1]
 Gtk.init()
@@ -43,7 +46,7 @@ with tempfile.TemporaryDirectory() as directory:
     except ValueError:
         assert not window.files
     view = sys.argv[2] if len(sys.argv) > 2 else "permissions"
-    if view not in {"permissions", "pair", "pair-receive", "pair-approved", "layout", "link", "files", "details", "details-approved"}: raise ValueError("Unknown view")
+    if view not in {"permissions", "pair", "pair-receive", "pair-approved", "layout", "link", "files", "details", "details-approved", "pair-mac", "pair-linux", "source", "wait"}: raise ValueError("Unknown view")
     if len(sys.argv) > 3 and sys.argv[3] == "small": window.set_default_size(880, 640)
     # Navigation cannot create approvals, grant desktop input or open a socket.
     for step in range(4):
@@ -139,6 +142,37 @@ with tempfile.TemporaryDirectory() as directory:
         assert not window.approvals.cards and not window.connected and not window.input.armed
         assert not window.peer_controls.get_visible() and not window.remove_peer.get_visible()
         assert not window.peer_fingerprint.get_visible() and window.pair_guide.get_visible()
+        # OS labels and source/receiver selection cannot create trust or arm input.
+        for index, operating_system in enumerate(("Windows", "Mac", "Linux")):
+            window.peer_os.set_selected(index); window._prepare_import(); window._show_step(1)
+            assert window.primary.get_label() == "Add " + operating_system + " computer"
+            assert not window.input.armed and not window.connected and not window.approvals.cards
+        window.peer_os.set_selected(0)
+        window.role.set_selected(1); window.source_supported = False; window.lifecycle_ready = True
+        window._show_step(0); window._update_setup()
+        assert not window.primary.get_sensitive() and not window.input.armed
+        capture_fixture = CaptureFixture()
+        previous_capture = window.capture_backend
+        try:
+            window.capture_backend = capture_fixture.backend
+            window.approvals.approve(peer.card); window._refresh_peers()
+            portal = CapturePortal(window.capture_backend, window._portal_changed, lambda *_: None, lambda *_: None)
+            portal.session = "/org/freedesktop/portal/desktop/session/fixture/gui"
+            portal.bounds = Bounds(-1000, 0, 1000, 800)
+            portal.enable = lambda edge, callback: callback()  # Explicit consent is synthetic in this GUI fixture.
+            window.portal = portal; window.source_supported = True
+            window.source = SourceSession(identity.card.device_id, window.connection, portal, window.status.set_text)
+            window.inbox.put(window.epoch, "connected", Bounds(0, 0, 1920, 1080)); window._tick(); window._show_step(3)
+            assert window.connected and not window.source.armed and not window.input.armed
+            assert window.primary.get_label() == "Start sharing" and window.primary.get_sensitive()
+            window._activate_primary(); assert window.source.armed and not window.source.owns_cursor
+            window._save_setup(); assert window.source.armed
+            window.role.set_selected(0)
+            assert not window.connected and window.source is None and not window.input.armed
+            assert not capture_fixture.backend.ready()
+        finally:
+            window._stop(); capture_fixture.close(); window.capture_backend = previous_capture
+            window._unpair(); window.pair_import_ready = False; window.source_supported = False
     finally:
         window._stop(); native.tearDown()
         window.backend = window.input.backend = original_backend
@@ -150,11 +184,15 @@ with tempfile.TemporaryDirectory() as directory:
             example = Path(directory) / "Example document.txt"; example.write_text("Disposable UI fixture.")
             window._stage_files([Gio.File.new_for_path(str(example))]); window.stack.set_visible_child_name("files")
         else:
+            if view in ("pair-mac", "pair-linux"):
+                window.peer_os.set_selected(1 if view == "pair-mac" else 2); window._prepare_import()
+            if view == "source": window.role.set_selected(1)
+            if view == "wait": window.network_mode.set_selected(1)
             if view == "pair-receive": window._prepare_import()
             if view.endswith("-approved"):
                 window.approvals.approve(peer.card); window._refresh_peers()
                 window.status.set_text("Computer approved. Continue when both computers have approved each other.")
-            window._show_step({"permissions": 0, "pair": 1, "pair-receive": 1, "pair-approved": 1, "layout": 2, "link": 3, "details": 3, "details-approved": 1}[view])
+            window._show_step({"permissions": 0, "pair": 1, "pair-receive": 1, "pair-approved": 1, "layout": 2, "link": 3, "details": 3, "details-approved": 1, "pair-mac": 1, "pair-linux": 1, "source": 0, "wait": 2}[view])
             if view.startswith("details"):
                 window.details.set_expanded(True)
                 def reveal_details():

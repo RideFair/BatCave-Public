@@ -12,8 +12,11 @@ gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango
 
 from .ei import EiBackend
+from .capture import CaptureBackend
+from .capture_portal import CapturePortal
 from .identity import Approvals, Card, Identity, SecretVault, strict_json
 from .input import InputSession
+from .source import SourceSession
 from .portal import Portal
 from .protocol import Bounds
 from .storage import StateDirectory, profile_path
@@ -59,6 +62,10 @@ class Window(Gtk.ApplicationWindow):
         self.connecting = False
         self.remote_bounds = None
         self.backend = EiBackend(application.library)
+        self.capture_backend = CaptureBackend(application.library)
+        self.source = None
+        self.source_supported = False
+        self.source_reason = "Checking whether this desktop supports keyboard and mouse capture…"
         self.files = []
         self.bus_subscriptions = []
         self.grant_started = False
@@ -158,25 +165,32 @@ class Window(Gtk.ApplicationWindow):
         self.pages.set_vhomogeneous(False); self.pages.set_hhomogeneous(False)
         self.page_scroll.set_child(self.pages)
 
-        permissions = card("One keyboard. Both computers.", "Use your Windows keyboard and mouse on this Linux desktop.")
+        permissions = card("One keyboard. Both computers.", "Choose where the keyboard and mouse will come from.")
+        self.role = Gtk.DropDown.new_from_strings(["Receive input here", "Use this keyboard and mouse"])
+        self.role.connect("notify::selected", lambda *_: self._configuration_changed())
+        permissions.append(self.role)
         self.permission_summary = text("Grant access when you're ready.")
         permissions.append(self.permission_summary)
-        permissions.append(text("Your desktop will ask before BatCave can receive keyboard and mouse input.", "muted"))
+        self.permission_explanation = text("Your desktop will ask before BatCave can receive keyboard and mouse input.", "muted")
+        permissions.append(self.permission_explanation)
         permissions.append(text("Access alone doesn't start sharing. You'll choose a trusted computer next.", "muted"))
         self.pages.add_named(permissions, "0")
 
         pair = card("Add your first computer", "Keep BatCave open on both computers. Exchange a connection file once to approve each other.")
         self.pair_title = pair.get_first_child()
         self.pair_explanation = self.pair_title.get_next_sibling()
+        self.peer_os = Gtk.DropDown.new_from_strings(["Windows", "Mac", "Linux"])
+        self.peer_os.connect("notify::selected", lambda *_: self._configuration_changed())
+        pair.append(text("Other computer", "muted")); pair.append(self.peer_os)
         self.pair_guide = column(10)
         self.send_guide = column(10)
         self.send_guide.append(self._section_heading("1", "Send this Linux computer's file"))
-        self.send_guide.append(text("Choose Save Linux file below and send the file to Windows by email or USB. In BatCave on Windows, open Pair computers and choose Add computer to approve Linux.", "muted"))
-        skip = button("I already have the Windows file", self._prepare_import); skip.set_halign(Gtk.Align.START)
+        self.send_instructions = text("", "muted"); self.send_guide.append(self.send_instructions)
+        self.skip_import = skip = button("I already have the other file", self._prepare_import); skip.set_halign(Gtk.Align.START)
         self.send_guide.append(skip); self.pair_guide.append(self.send_guide)
         self.receive_guide = column(10)
-        self.receive_guide.append(self._section_heading("2", "Bring the Windows file here"))
-        self.receive_guide.append(text("On Windows, choose Save Windows file in Pair computers. Send that file here, then choose Add Windows computer below. Compare the entire approval code on both computers.", "muted"))
+        self.receive_guide.append(self._section_heading("2", "Bring the other computer's file here"))
+        self.receive_instructions = text("", "muted"); self.receive_guide.append(self.receive_instructions)
         again = button("Save Linux file again…", self._export); again.set_halign(Gtk.Align.START)
         self.receive_guide.append(again); self.pair_guide.append(self.receive_guide)
         self.pair_guide.append(text("Connection files identify your computers. Your private key stays here; exchanging a file doesn't start input sharing.", "muted"))
@@ -196,11 +210,11 @@ class Window(Gtk.ApplicationWindow):
         self.peers.set_factory(factory)
         self.peers.connect("notify::selected", lambda *_: self._peer_changed())
         self.peer_controls.append(self.peers)
-        self.peer_controls.append(text("If Windows hasn't approved Linux yet, send it your Linux connection file and choose Add computer there.", "muted"))
+        self.peer_controls.append(text("Both computers must approve each other's connection file before linking.", "muted"))
         approved_actions = Gtk.Box(spacing=10)
         self.export = button("Save Linux file…", self._export); self.export.set_sensitive(False)
         approved_actions.append(self.export)
-        self.import_another = button("Add another Windows computer…", self._import)
+        self.import_another = button("Add another computer…", self._import)
         approved_actions.append(self.import_another); self.peer_controls.append(approved_actions)
         self.peer_controls.set_visible(False); pair.append(self.peer_controls)
         older_windows = Gtk.Expander(label="Pairing with Windows 0.2.0?")
@@ -208,28 +222,33 @@ class Window(Gtk.ApplicationWindow):
         older_help.set_margin_top(8); older_windows.set_child(older_help); pair.append(older_windows)
         self.pages.add_named(pair, "1")
 
-        layout = card("Arrange screens", "Match this side in BatCave on Windows. Windows controls the shared screen boundary.")
+        layout = card("Arrange screens", "Put the other computer on the same side as its physical screen.")
         layout.add_css_class("link-card"); layout.set_spacing(8)
-        layout.append(text("Windows address", "muted"))
-        layout.append(text("On Windows, copy the local network address from Pair computers or Address & security details. In Windows 0.2.0, use Connection details. Enter it below; both computers need the same home or office network.", "muted"))
-        self.address = Gtk.Entry(placeholder_text="Enter the Windows local network address", hexpand=True)
-        self.address.connect("changed", lambda *_: self._update_setup())
-        layout.append(self.address)
+        self.network_mode = Gtk.DropDown.new_from_strings(["Connect to the other computer", "Wait for the other computer"])
+        self.network_mode.connect("notify::selected", lambda *_: self._configuration_changed())
+        layout.append(self.network_mode)
+        self.address_box = column(6)
+        self.address_box.append(text("Other computer's local network address", "muted"))
+        self.address = Gtk.Entry(placeholder_text="Enter the local network address", hexpand=True)
+        self.address.connect("changed", lambda *_: self._address_changed())
+        self.address_box.append(self.address); layout.append(self.address_box)
+        self.wait_guide = text("Choose Connect on the other computer and enter this Linux computer's network address. Use the same port on both computers; see Connection details.", "muted")
+        layout.append(self.wait_guide)
         self.connection_summary = text("Choose your computer and enter its Windows address.")
         layout.append(self.connection_summary)
-        self.side = Gtk.DropDown.new_from_strings(["Linux is on the right", "Linux is on the left"])
-        self.side.connect("notify::selected", lambda *_: self._arrange_tiles()); layout.append(self.side)
+        self.side = Gtk.DropDown.new_from_strings(["Other computer is on the left", "Other computer is on the right"])
+        self.side.connect("notify::selected", lambda *_: self._configuration_changed()); layout.append(self.side)
         self.desktop_tiles = Gtk.Box(spacing=12, homogeneous=True)
         self.windows_tile, self.windows_geometry = self._desktop_tile("Windows")
-        self.linux_tile, self.linux_geometry = self._desktop_tile("Linux")
+        self.linux_tile, self.linux_geometry = self._desktop_tile("This Linux computer")
         self._arrange_tiles(); layout.append(self.desktop_tiles)
-        layout.append(text("Each computer is shown as one desktop. This guide doesn't change the Windows layout.", "muted"))
+        layout.append(text("Each computer is shown as one desktop. Set the shared edge on the computer whose keyboard and mouse you use.", "muted"))
         self.pages.add_named(layout, "2")
 
-        link = card("Link devices", "Enable Linux input here, then choose Start sharing on Windows.")
+        link = card("Link devices", "Choose Receive input on one computer and use the keyboard and mouse of the other.")
         self.link_summary = text("Choose your computer and enter its address.")
         link.append(self.link_summary)
-        link.append(text("Move through the shared edge on Windows to use Linux. Pause sharing restores local control.", "muted"))
+        link.append(text("Enable input on the receiving computer, then choose Start sharing on the source. Pause sharing restores local control.", "muted"))
         link.append(text("You can save this setup for next time. Reconnecting always asks you to enable input again.", "muted"))
         self.pages.add_named(link, "3")
 
@@ -243,7 +262,10 @@ class Window(Gtk.ApplicationWindow):
         self.geometry = text("Display regions appear after granting access.", "muted")
         for widget in (self.fingerprint, self.peer_fingerprint, self.permission_label, self.connection_label, self.sharing_label, self.geometry):
             detail_box.append(widget)
-        detail_box.append(text("Arrange the shared screen boundary in BatCave on Windows.", "muted"))
+        detail_box.append(text("Connection port", "muted"))
+        self.port = Gtk.SpinButton.new_with_range(1, 65535, 1); self.port.set_value(47870)
+        self.port.connect("value-changed", lambda *_: self._address_changed()); detail_box.append(self.port)
+        detail_box.append(text("When waiting, BatCave accepts only the selected approved computer on this port. It never enables input automatically.", "muted"))
         self.remove_peer = button("Remove computer", self._unpair); self.remove_peer.set_halign(Gtk.Align.START)
         self.remove_peer.set_visible(False)
         detail_box.append(self.remove_peer)
@@ -313,11 +335,40 @@ class Window(Gtk.ApplicationWindow):
         order = (self.windows_tile, self.linux_tile) if self.side.get_selected() == 0 else (self.linux_tile, self.windows_tile)
         for tile in order: self.desktop_tiles.append(tile)
 
+    def _is_source(self):
+        return self.role.get_selected() == 1
+
+    def _is_listener(self):
+        return self.network_mode.get_selected() == 1
+
+    def _os_name(self):
+        return ("Windows", "Mac", "Linux")[min(2, self.peer_os.get_selected())]
+
+    def _address_changed(self):
+        if self.connected or self.connecting: self._stop()
+        self._update_setup()
+
+    def _configuration_changed(self):
+        if not hasattr(self, "primary"): return
+        self._stop()
+        if self.portal: self.portal.dispose(); self.portal = None
+        self.source = None; self.capture_backend.close(); self.backend.close()
+        self.grant_started = False
+        self._arrange_tiles(); self._update_setup()
+
+    def _permission_ready(self):
+        return bool(self.lifecycle_ready and (self.portal and isinstance(self.portal, CapturePortal) and self.portal.ready()
+                                             if self._is_source() else self.backend.ready()))
+
+    def _bounds(self):
+        return self.portal.bounds if self._is_source() else self.backend.bounds()
+
     def _save_setup(self):
         peer = self._peer()
-        if not peer or not self._setup_state().address_valid: raise ValueError("Pair a computer and enter its Windows address first.")
+        if not peer or not (self._is_listener() or self._setup_state().address_valid): raise ValueError("Pair a computer and enter its address, or choose Wait for computer.")
         self.state.write("connection-preferences.json", {"peerId": peer.device_id, "address": self.address.get_text().strip(),
-                         "linuxOnRight": self.side.get_selected() == 0})
+                         "linuxOnRight": self.side.get_selected() == 0, "source": self._is_source(),
+                         "listen": self._is_listener(), "peerOS": self._os_name(), "port": self.port.get_value_as_int()})
         self.status.set_text("Setup saved. Input still needs your approval each time you reconnect.")
 
     def _setup_state(self):
@@ -327,24 +378,32 @@ class Window(Gtk.ApplicationWindow):
         except ValueError:
             address_valid = False
         return SetupState(self.identity is not None, self.lifecycle_ready, self.grant_started,
-                          self.lifecycle_ready and self.backend.ready(), self._peer() is not None if self.approvals else False,
-                          address_valid, self.connecting, self.connected, bool(self.input and self.input.armed), self.pair_import_ready)
+                          self._permission_ready(), self._peer() is not None if self.approvals else False,
+                          address_valid, self.connecting, self.connected,
+                          bool(self.source and self.source.armed if self._is_source() else self.input and self.input.armed),
+                          self.pair_import_ready, source=self._is_source(), listen=self._is_listener(),
+                          permission_supported=not self._is_source() or self.source_supported,
+                          enable_pending=bool(self.source and self.source.pending_enable), peer_os=self._os_name())
 
     def _update_setup(self):
         if not hasattr(self, "primary"): return
         state = self._setup_state()
+        self.permission_explanation.set_text("Your desktop will ask before BatCave can capture this keyboard and mouse. Capture begins only when you cross the chosen edge." if state.source else "Your desktop will ask before BatCave can receive keyboard and mouse input.")
         action = primary_action(self.setup_step, state)
         if self.primary.get_label() != action.label: self.primary.set_label(action.label)
         self.primary.set_sensitive(action.enabled)
         self.pause_button.set_sensitive(state.connected or state.connecting or state.armed)
-        self.sidebar_status.set_text("Ready for Windows input" if state.armed else "Linked · input is paused" if state.connected else "Sharing is paused")
-        self.save_setup.set_sensitive(state.peer_selected and state.address_valid)
+        self.sidebar_status.set_text("Sharing is ready" if state.armed else "Linked · input is paused" if state.connected else "Sharing is paused")
+        self.save_setup.set_sensitive(state.peer_selected and (state.listen or state.address_valid))
+        self.address_box.set_visible(not state.listen); self.wait_guide.set_visible(state.listen)
         if state.permission_ready:
-            self.permission_summary.set_text("Ready to receive your keyboard and mouse.")
+            self.permission_summary.set_text("Ready to share this keyboard and mouse." if state.source else "Ready to receive your keyboard and mouse.")
         elif state.permission_pending:
             self.permission_summary.set_text("Choose Allow in your desktop's permission window.")
         elif state.identity_ready and not state.desktop_ready:
             self.permission_summary.set_text("Desktop session services aren't available. Input sharing is paused.")
+        elif state.source and not state.permission_supported:
+            self.permission_summary.set_text(self.source_reason)
         else:
             self.permission_summary.set_text("Grant access when you're ready.")
         peer = self._peer() if self.approvals else None
@@ -354,25 +413,29 @@ class Window(Gtk.ApplicationWindow):
         self.receive_guide.set_visible(self.pair_import_ready)
         self.remove_peer.set_visible(state.peer_selected)
         self.remove_peer.set_sensitive(state.peer_selected)
-        self.pair_title.set_text("Your Windows computer" if peer else "Add your first computer")
-        self.pair_explanation.set_text("Windows must also approve your Linux connection file before the computers can connect." if peer else "Keep BatCave open on both computers. Exchange a connection file once to approve each other.")
+        self.pair_title.set_text("Your other computer" if peer else "Add your first computer")
+        self.pair_explanation.set_text("The other computer must also approve your Linux connection file before the computers can connect." if peer else "Keep BatCave open on both computers. Exchange a connection file once to approve each other.")
+        self.send_instructions.set_text(f"Save this Linux file and send it to {state.peer_os} by email or USB. In BatCave there, open Pair computers and add this Linux computer.")
+        self.receive_instructions.set_text(f"On {state.peer_os}, save its connection file in Pair computers. Bring that file here and choose Add {state.peer_os} computer. Compare the entire approval code on both computers.")
+        self.skip_import.set_label("I already have the " + state.peer_os + " file")
+        self.windows_tile.get_first_child().get_last_child().set_text(state.peer_os)
         self.pair_summary.set_text("Approved: " + peer.display_name + "." if peer else "No computer has been approved yet. Exchange the files above to get started.")
         self.peer_fingerprint.set_visible(state.peer_selected)
         self.peer_fingerprint.set_text("Approved computer SHA-256\n" + peer.fingerprint if peer else "")
         if state.permission_ready:
-            bounds = self.backend.bounds(); self.linux_geometry.set_text(f"{bounds.width} × {bounds.height}")
+            bounds = self._bounds(); self.linux_geometry.set_text(f"{bounds.width} × {bounds.height}")
         else: self.linux_geometry.set_text("After desktop access")
         self.windows_geometry.set_text(f"{self.remote_bounds.width} × {self.remote_bounds.height}" if state.connected and self.remote_bounds else "After linking")
         if state.armed:
-            self.link_summary.set_text("Ready for Windows input. Choose Start sharing on Windows and move through the shared edge.")
+            self.link_summary.set_text("Enable input on the other computer, then cross the shared edge. F12 pauses sharing." if state.source else "Ready for input. Choose Start sharing on the other computer and move through the shared edge.")
         elif state.connected:
             self.link_summary.set_text("Devices are securely linked. Choose Enable Linux input when you're ready.")
         elif state.connecting:
-            self.link_summary.set_text("Linking your devices securely…")
+            self.link_summary.set_text("Waiting for the selected approved computer…" if state.listen else "Linking your devices securely…")
         elif not state.permission_ready:
             self.link_summary.set_text("Grant desktop access before linking your devices.")
         else:
-            self.link_summary.set_text("Choose your computer and enter its Windows address.")
+            self.link_summary.set_text("Choose your computer, then connect to it or wait for it to connect here.")
         self.connection_summary.set_text("Encrypted connection verified." if state.connected else self.link_summary.get_text())
 
     def _activate_primary(self):
@@ -403,8 +466,9 @@ class Window(Gtk.ApplicationWindow):
         if self.shutting_down:
             state.close(); return False
         self.state, self.identity, self.approvals = state, identity, approvals
-        self.connection = Connection(identity, self.inbox)
         self.input = InputSession(identity.card.device_id, self.backend)
+        self.connection = Connection(identity, self.inbox, lambda: self.input.generation,
+                                      lambda peer: self.approvals.cards.get(peer.device_id) == peer)
         self.fingerprint.set_text("My SHA-256 fingerprint\n" + " ".join(identity.card.fingerprint[i:i + 8] for i in range(0, 64, 8)))
         self.export.set_sensitive(True)
         self._refresh_peers(); self._watch_lifecycle()
@@ -418,8 +482,23 @@ class Window(Gtk.ApplicationWindow):
                 if peer_id in self.peer_ids: self.peers.set_selected(self.peer_ids.index(peer_id))
                 side = preferences.get("linuxOnRight", True)
                 if type(side) is bool: self.side.set_selected(0 if side else 1)
+                for key, widget in (("source", self.role), ("listen", self.network_mode)):
+                    value = preferences.get(key, False)
+                    if type(value) is bool: widget.set_selected(1 if value else 0)
+                other_os = preferences.get("peerOS", "Windows")
+                if other_os in ("Windows", "Mac", "Linux"): self.peer_os.set_selected(("Windows", "Mac", "Linux").index(other_os))
+                port = preferences.get("port", 47870)
+                if type(port) is int and 1 <= port <= 65535: self.port.set_value(port)
         except (ValueError, OSError, AttributeError):
-            self.status.set_text("Saved connection preferences could not be read. Enter the Windows address again.")
+            self.status.set_text("Saved connection preferences could not be read. Enter the other computer's address again.")
+        probe = None
+        try:
+            probe = CapturePortal(self.capture_backend, lambda *_args, **_kwargs: None, lambda *_: None, lambda *_: None)
+            probe.capability(); self.source_supported = True
+        except Exception:
+            self.source_reason = "This desktop does not provide keyboard and mouse capture permission. Choose Receive input here."
+        finally:
+            if probe: probe.dispose()
         if self.lifecycle_ready:
             self.status.set_text("Your device is ready. Continue to link your computers.")
         self._update_setup()
@@ -455,7 +534,7 @@ class Window(Gtk.ApplicationWindow):
             file = dialog.get_file()
             file.replace_contents(self.identity.card.serialize(), None, False, Gio.FileCreateFlags.PRIVATE, None)
             self._prepare_import()
-            self.status.set_text("Linux connection file saved. Send it to Windows and choose Add computer there.")
+            self.status.set_text("Linux connection file saved. Send it to the other computer and add Linux there.")
         self._dialog("Save this Linux computer's connection file", Gtk.FileChooserAction.SAVE, save, name="Linux.batcave-peer.json")
 
     def _import(self):
@@ -467,10 +546,10 @@ class Window(Gtk.ApplicationWindow):
                 if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode): raise ValueError("Choose a regular connection file.")
                 data = stream.read(16385)
             card_value = Card.read(data)
-            if card_value.device_id == self.identity.card.device_id: raise ValueError("This is this Linux computer's file. Choose the Windows connection file instead.")
+            if card_value.device_id == self.identity.card.device_id: raise ValueError("This is this Linux computer's file. Choose the other computer's connection file instead.")
             prompt = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.QUESTION,
                   buttons=Gtk.ButtonsType.YES_NO, text="Approve " + card_value.display_name + "?",
-                  secondary_text="On Windows, open Address & security details (Connection details in 0.2.0) and compare this entire approval code (SHA-256). Choose Yes only if it matches. Input sharing still needs your approval later.\n\n" + card_value.fingerprint)
+                  secondary_text="On the other computer, open its connection details and compare this entire approval code (SHA-256). Choose Yes only if it matches. Input sharing still needs your approval later.\n\n" + card_value.fingerprint)
             prompt.set_default_response(Gtk.ResponseType.NO)
             def approved(widget, response):
                 if response == Gtk.ResponseType.YES:
@@ -479,7 +558,7 @@ class Window(Gtk.ApplicationWindow):
                         self.status.set_text("Computer approved. Continue when both computers have approved each other.")
                 widget.destroy()
             prompt.connect("response", approved); prompt.show()
-        self._dialog("Choose the Windows connection file", Gtk.FileChooserAction.OPEN, selected)
+        self._dialog("Choose the other computer's connection file", Gtk.FileChooserAction.OPEN, selected)
 
     def _unpair(self):
         peer = self._peer()
@@ -494,7 +573,13 @@ class Window(Gtk.ApplicationWindow):
         def action():
             if not self.lifecycle_ready:
                 raise RuntimeError("A desktop session with sleep and lock notifications is required.")
-            if self.portal is None: self.portal = Portal(self.backend, self._portal_changed)
+            if self.portal is None:
+                if self._is_source():
+                    self.portal = CapturePortal(self.capture_backend, self._portal_changed,
+                                  lambda *args: self.source.activate(*args) if self.source else None,
+                                  lambda *args: self.source.deactivated(*args) if self.source else None)
+                    self.source = SourceSession(self.identity.card.device_id, self.connection, self.portal, self.status.set_text)
+                else: self.portal = Portal(self.backend, self._portal_changed)
             self.portal.grant(); self.grant_started = True
             self._update_setup()
         self._guard(action)
@@ -507,11 +592,15 @@ class Window(Gtk.ApplicationWindow):
 
     def _connect(self):
         def action():
-            if not self.lifecycle_ready or not self.backend.ready(): raise RuntimeError("Grant desktop access before linking devices.")
-            if not self._peer(): raise ValueError("Add and approve the Windows computer's connection file first.")
-            self._stop()
+            if not self._permission_ready(): raise RuntimeError("Grant desktop access before linking devices.")
+            if not self._peer(): raise ValueError("Add and approve the other computer's connection file first.")
+            self._stop(preserve_permission=True)
             self._save_setup()
-            self.epoch = self.connection.connect(self.address.get_text().strip(), self._peer(), self.backend.bounds())
+            if self._is_listener():
+                self.epoch = self.connection.listen(self._peer(), self._bounds(), port=self.port.get_value_as_int())
+            else:
+                self.epoch = self.connection.connect(self.address.get_text().strip(), self._peer(), self._bounds(),
+                                                     self.port.get_value_as_int(), listen_port=self.port.get_value_as_int())
             self.connecting = True
             self.status.set_text("Linking your devices securely…")
             self._update_setup()
@@ -520,14 +609,16 @@ class Window(Gtk.ApplicationWindow):
     def _allow(self):
         def action():
             if not self.lifecycle_ready or not self.connected: raise RuntimeError("Link devices before starting sharing.")
-            self.input.enable(self.backend.bounds())
+            if self._is_source(): self.source.start("left" if self.side.get_selected() == 0 else "right")
+            else: self.input.enable(self.backend.bounds())
         self._guard(action)
-        if self.input.armed: self.status.set_text("Ready for Windows input. Choose Start sharing on Windows.")
+        if self.input.armed: self.status.set_text("Ready for input. Choose Start sharing on the other computer.")
         self._update_setup()
 
-    def _stop(self):
+    def _stop(self, preserve_permission=False):
         try:
             if self.input: self.input.disconnect()
+            if self.source: self.source.disconnect(close_permission=not preserve_permission)
         finally:
             if self.connection:
                 self.connection.stop()
@@ -541,33 +632,50 @@ class Window(Gtk.ApplicationWindow):
         self._update_setup()
         self.connection_label.set_text("Secure connection: disconnected")
         self.sharing_label.set_text("Input sharing: paused")
-        self.status.set_text("Sharing paused. Reconnect and choose Enable Linux input when ready.")
+        self.status.set_text("Sharing paused. Connect again and approve input when ready.")
 
     def _tick(self):
         if self.shutting_down: return False
         try:
             self.backend.poll()
+            self.capture_backend.poll()
             for epoch, kind, value in self.inbox.drain():
                 if epoch != self.epoch: continue
                 if kind == "connected":
+                    if getattr(value, "connection_generation", self.connection.session_token) != self.connection.session_token: continue
+                    if self.connected and self.source: self.source.stop(notify=False)
                     self.connected = True; self.connecting = False; self.input.connected(epoch)
                     self.remote_bounds = value
+                    if self._is_source() and self.source: self.source.connected(epoch, self._peer(), value)
                     self.connection_label.set_text("Secure connection: TLS 1.3 verified")
                     self.status.set_text("Devices linked securely. Choose Enable Linux input when ready.")
+                elif kind == "listening":
+                    self.status.set_text(f"Waiting for the selected approved computer on port {value[-1]}…")
                 elif kind == "disconnected": self._stop(); self.status.set_text(value)
-                elif kind == "message": self.input.handle(epoch, value)
-            ready = self.backend.ready()
+                elif kind == "interrupted":
+                    self.input.disconnect()
+                    if self.source: self.source.disconnect()
+                    self.connected = False; self.connecting = True; self.remote_bounds = None
+                    self.status.set_text("Input paused. Waiting for the approved connection to settle…")
+                elif kind == "message":
+                    if getattr(value, "connection_generation", -1) != self.connection.session_token: continue
+                    if self._is_source() and self.source: self.source.handle(epoch, value)
+                    else: self.input.handle(epoch, value, getattr(value, "input_generation", -1))
+            events = self.capture_backend.events()
+            if self._is_source() and self.source: self.source.events(events)
+            ready = self._permission_ready()
             if ready: self.grant_started = False
             self._update_setup()
 
             if ready:
                 self.permission_label.set_text("Desktop access: keyboard and mouse ready")
-                bounds = self.backend.bounds(); self.geometry.set_text(f"Authorized desktop: {bounds.width} × {bounds.height}")
+                bounds = self._bounds(); self.geometry.set_text(f"Authorized desktop: {bounds.width} × {bounds.height}")
             else:
                 self.permission_label.set_text("Desktop access: waiting for approval" if self.grant_started else "Desktop access: not granted")
                 self.geometry.set_text("Display regions appear after granting access.")
-            self.sharing_label.set_text("Input sharing: active" if self.input and self.input.owns_cursor else
-                                        "Input sharing: awaiting a handoff" if self.input and self.input.armed else "Input sharing: paused")
+            current = self.source if self._is_source() else self.input
+            self.sharing_label.set_text("Input sharing: active" if current and current.owns_cursor else
+                                        "Input sharing: awaiting a handoff" if current and current.armed else "Input sharing: paused")
         except Exception:
             self._stop()
             if self.portal: self.portal.close()
@@ -685,7 +793,7 @@ class Window(Gtk.ApplicationWindow):
         self._stop()
         if self.portal: self.portal.dispose()
         for bus, subscription in self.bus_subscriptions: bus.signal_unsubscribe(subscription)
-        self.backend.close(); self._clear_files()
+        self.backend.close(); self.capture_backend.close(); self._clear_files()
         if self.state: self.state.close()
         return False
 
