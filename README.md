@@ -40,3 +40,10 @@ Local configuration and development records are excluded from source packages.
 Run `python Scripts/check_public_source.py` before publishing a source snapshot.
 That check complements a full-history secret scan; it does not certify the absence
 of every vulnerability or remove data from old Git commits.
+
+## Maintainer and contact
+
+BatCave is maintained by Tyler Harris. You can reach Tyler on X at
+[@tyler_x_harris](https://x.com/tyler_x_harris) or [@ridefair](https://x.com/ridefair).
+For security concerns, follow the private disclosure guidance in
+[SECURITY.md](SECURITY.md).
