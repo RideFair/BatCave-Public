@@ -66,6 +66,7 @@ class Window(Gtk.ApplicationWindow):
         self.shutting_down = False
         self.peer_ids = []
         self.setup_step = 0
+        self.pair_import_ready = False
         self._build()
         self.connect("close-request", self._close)
         self.tick = GLib.timeout_add(20, self._tick)
@@ -77,47 +78,79 @@ class Window(Gtk.ApplicationWindow):
     def _build(self):
         css = Gtk.CssProvider()
         css.load_from_data(b"""
-            .content { background: #f5f7fb; color: #18283d; }
-            .header { background: #ffffff; padding: 18px 24px; border-bottom: 1px solid #dce4ef; }
-            .brand { font-size: 25px; font-weight: 700; }
-            .subtitle, .muted { color: #5c6c83; }
-            .card { background: #ffffff; border: 1px solid #dce4ef; border-radius: 14px; padding: 24px; }
+            .content { background: #f2f4f8; color: #1f2639; font-size: 14px; }
+            .header { padding: 24px 26px 16px; }
+            .brand { color: #ffffff; font-size: 27px; font-weight: 700; }
+            .subtitle, .muted { color: #646e83; }
+            .page-title { font-size: 27px; font-weight: 700; }
+            .kicker { color: #646e83; font-size: 12px; }
+            .card { background: #ffffff; border: 1px solid #dee2eb; border-radius: 14px; padding: 24px; }
             .card-title { font-size: 22px; font-weight: 700; }
             .link-card { padding: 14px 18px; }
-            .desktop-tile { background: #edf2fa; border: 1px solid #dce4ef; border-radius: 10px; padding: 12px; }
-            .hero { font-size: 30px; font-weight: 700; }
-            .step { background: transparent; border: 0; box-shadow: none; color: #66778e; padding: 12px 8px; }
-            .step.current { background: #e7eefb; color: #245496; font-weight: 700; border-radius: 10px; }
-            .status { color: #425b79; padding: 4px 0; }
+            .desktop-tile { background: #f2f4f8; border: 1px solid #dee2eb; border-radius: 10px; padding: 12px; }
+            .sidebar { background: #181d2f; padding: 24px 12px 20px; }
+            .sidebar .subtitle { color: #97a2bb; font-size: 12px; }
+            .sidebar .brand { padding: 0 12px; }
+            .sidebar .tagline { padding: 0 12px 20px; }
+            .step { background: transparent; border: 0; box-shadow: none; color: #ced5e7; padding: 12px 10px; }
+            .step:hover { background: #2a3047; }
+            .step.current { background: #312e4f; color: #ffffff; border-radius: 10px; }
+            .step-heading { font-size: 13px; font-weight: 700; }
+            .step-description { color: #97a2bb; font-size: 11px; }
+            .step-number { background: #2c3348; color: #ffffff; border-radius: 14px; font-size: 12px; }
+            .step.current .step-number { background: #634fe1; }
+            .sidebar-status { color: #ced5e7; padding: 0 10px; font-size: 12px; }
+            .sidebar button.pause { background: #232a40; color: #ced5e7; border-color: #353d55; }
+            .sidebar button.pause:disabled { color: #97a2bb; }
+            .section-heading { font-weight: 700; }
+            .section-number { color: #634fe1; font-weight: 700; }
+            .pair-status { background: #f2f4f8; border-radius: 8px; padding: 12px; }
+            .status { color: #646e83; padding: 4px 0; font-size: 12px; }
             .drop-zone { border: 2px dashed #aac0dc; border-radius: 12px; padding: 24px; }
             .file-row { padding: 10px; border-bottom: 1px solid #e3e9f1; }
-            button { padding: 10px 16px; }
+            button { background: #ffffff; color: #1f2639; border: 1px solid #dee2eb; border-radius: 8px; padding: 10px 16px; box-shadow: none; }
+            button:hover { background: #f0edfc; }
+            button:disabled { background: #e8ebf2; color: #646e83; }
+            button.suggested-action { background: #634fe1; color: #ffffff; border-color: #634fe1; }
+            button.suggested-action:hover { background: #4f3cc8; }
+            button.suggested-action:disabled { background: #e8ebf2; color: #646e83; border-color: #dee2eb; }
+            .header button:checked { background: #e9e5fd; color: #4f3cc8; border-color: #cabffa; }
             entry { padding: 8px; }
         """)
         Gtk.StyleContext.add_provider_for_display(self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        root = column(0); root.add_css_class("content"); self.set_child(root)
+        root = Gtk.Box(spacing=0); root.add_css_class("content"); self.set_child(root)
+        sidebar = column(6); sidebar.add_css_class("sidebar"); sidebar.set_size_request(226, -1)
+        sidebar.append(text("BatCave", "brand"))
+        tagline = text("Your computers, together.", "subtitle"); tagline.add_css_class("tagline"); sidebar.append(tagline)
+        self.step_buttons = []
+        descriptions = ("Allow desktop access", "Approve a computer", "Choose the shared edge", "Start when you're ready")
+        for index, title in enumerate(STEP_TITLES):
+            widget = button(title, lambda index=index: self._show_devices_step(index))
+            row = Gtk.Box(spacing=10)
+            number = Gtk.Label(label=str(index + 1)); number.add_css_class("step-number")
+            number.set_size_request(28, 28); number.set_valign(Gtk.Align.CENTER); row.append(number)
+            labels = column(3); labels.append(text(title, "step-heading")); labels.append(text(descriptions[index], "step-description"))
+            row.append(labels); widget.set_child(row)
+            widget.add_css_class("step"); sidebar.append(widget); self.step_buttons.append(widget)
+        sidebar.append(Gtk.Box(vexpand=True))
+        self.sidebar_status = text("Sharing is paused", "sidebar-status"); sidebar.append(self.sidebar_status)
+        self.pause_button = button("Pause sharing", self._stop); self.pause_button.add_css_class("pause")
+        self.pause_button.set_sensitive(False); sidebar.append(self.pause_button)
+        root.append(sidebar)
+        content = column(0); content.set_hexpand(True); content.set_vexpand(True); root.append(content)
         header = Gtk.Box(spacing=20); header.add_css_class("header")
-        brand = column(2); brand.set_hexpand(True)
-        brand.append(text("BatCave", "brand")); brand.append(text("Your computers, together", "subtitle"))
-        header.append(brand)
+        heading = column(4); heading.set_hexpand(True)
+        self.page_kicker = text("Set up your computers", "kicker")
+        self.page_title = text(STEP_TITLES[0], "page-title")
+        heading.append(self.page_kicker); heading.append(self.page_title); header.append(heading)
         self.stack = Gtk.Stack(hexpand=True, vexpand=True)
+        self.stack.connect("notify::visible-child-name", lambda *_: self._update_title())
         tabs = Gtk.StackSwitcher(halign=Gtk.Align.CENTER)
         tabs.set_stack(self.stack); header.append(tabs)
-        self.pause_button = button("Pause sharing", self._stop)
-        self.pause_button.set_sensitive(False); header.append(self.pause_button); root.append(header)
-        root.append(self.stack)
-        devices = Gtk.Box(spacing=0)
+        content.append(header); content.append(self.stack)
         setup = column(16); setup.set_hexpand(True); setup.set_vexpand(True)
-        setup.set_margin_start(24); setup.set_margin_end(24); setup.set_margin_top(16); setup.set_margin_bottom(20)
-        self.stack.add_titled(devices, "setup", "Devices")
-        steps = column(8); steps.set_size_request(215, -1)
-        steps.set_margin_top(16); steps.set_margin_start(12)
-        self.step_buttons = []
-        for index, title in enumerate(STEP_TITLES):
-            widget = button(f"{index + 1}  {title}", lambda index=index: self._show_step(index))
-            widget.get_child().set_xalign(0)
-            widget.add_css_class("step"); steps.append(widget); self.step_buttons.append(widget)
-        devices.append(steps); devices.append(setup)
+        setup.set_margin_start(26); setup.set_margin_end(26); setup.set_margin_bottom(20)
+        self.stack.add_titled(setup, "setup", "Devices")
         self.page_scroll = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
         self.page_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         setup.append(self.page_scroll)
@@ -132,26 +165,54 @@ class Window(Gtk.ApplicationWindow):
         permissions.append(text("Access alone doesn't start sharing. You'll choose a trusted computer next.", "muted"))
         self.pages.add_named(permissions, "0")
 
-        pair = card("Pair with your Windows computer", "Exchange public device cards and confirm the fingerprint shown on the other computer.")
-        self.pair_summary = text("Add the Windows computer you want to use.")
-        pair.append(self.pair_summary)
-        self.export = button("Export device card", self._export)
-        self.export.set_sensitive(False)
-        card_actions = Gtk.Box(spacing=10); card_actions.append(self.export)
-        self.import_another = button("Import another card", self._import)
-        self.import_another.set_visible(False); card_actions.append(self.import_another)
-        pair.append(card_actions)
-        pair.append(text("Paired computer", "muted"))
+        pair = card("Add your first computer", "Keep BatCave open on both computers. Exchange a connection file once to approve each other.")
+        self.pair_title = pair.get_first_child()
+        self.pair_explanation = self.pair_title.get_next_sibling()
+        self.pair_guide = column(10)
+        self.send_guide = column(10)
+        self.send_guide.append(self._section_heading("1", "Send this Linux computer's file"))
+        self.send_guide.append(text("Choose Save Linux file below and send the file to Windows by email or USB. In BatCave on Windows, open Pair computers and choose Add computer to approve Linux.", "muted"))
+        skip = button("I already have the Windows file", self._prepare_import); skip.set_halign(Gtk.Align.START)
+        self.send_guide.append(skip); self.pair_guide.append(self.send_guide)
+        self.receive_guide = column(10)
+        self.receive_guide.append(self._section_heading("2", "Bring the Windows file here"))
+        self.receive_guide.append(text("On Windows, choose Save Windows file in Pair computers. Send that file here, then choose Add Windows computer below. Compare the entire approval code on both computers.", "muted"))
+        again = button("Save Linux file again…", self._export); again.set_halign(Gtk.Align.START)
+        self.receive_guide.append(again); self.pair_guide.append(self.receive_guide)
+        self.pair_guide.append(text("Connection files identify your computers. Your private key stays here; exchanging a file doesn't start input sharing.", "muted"))
+        pair.append(self.pair_guide)
+        self.pair_summary = text("No computer has been approved yet.", "pair-status"); pair.append(self.pair_summary)
+        self.peer_controls = column(8)
+        self.peer_controls.append(text("Approved computer", "muted"))
         self.peers = Gtk.DropDown.new_from_strings([]); self.peers.set_hexpand(True)
+        factory = Gtk.SignalListItemFactory()
+        def setup_name(_factory, item):
+            label = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END, max_width_chars=28)
+            label.set_hexpand(True); item.set_child(label)
+        def bind_name(_factory, item):
+            name = item.get_item().get_string()
+            item.get_child().set_text(name); item.get_child().set_tooltip_text(name)
+        factory.connect("setup", setup_name); factory.connect("bind", bind_name)
+        self.peers.set_factory(factory)
         self.peers.connect("notify::selected", lambda *_: self._peer_changed())
-        pair.append(self.peers)
-        pair.append(text("Cards contain public identity information. Your private key stays on this computer.", "muted"))
+        self.peer_controls.append(self.peers)
+        self.peer_controls.append(text("If Windows hasn't approved Linux yet, send it your Linux connection file and choose Add computer there.", "muted"))
+        approved_actions = Gtk.Box(spacing=10)
+        self.export = button("Save Linux file…", self._export); self.export.set_sensitive(False)
+        approved_actions.append(self.export)
+        self.import_another = button("Add another Windows computer…", self._import)
+        approved_actions.append(self.import_another); self.peer_controls.append(approved_actions)
+        self.peer_controls.set_visible(False); pair.append(self.peer_controls)
+        older_windows = Gtk.Expander(label="Pairing with Windows 0.2.0?")
+        older_help = text("On Windows 0.2.0, Save Windows card saves its connection file, and Import device card adds Linux. Connection details shows the full approval code and Windows address.", "muted")
+        older_help.set_margin_top(8); older_windows.set_child(older_help); pair.append(older_windows)
         self.pages.add_named(pair, "1")
 
         layout = card("Arrange screens", "Match this side in BatCave on Windows. Windows controls the shared screen boundary.")
         layout.add_css_class("link-card"); layout.set_spacing(8)
         layout.append(text("Windows address", "muted"))
-        self.address = Gtk.Entry(placeholder_text="Address shown in BatCave on Windows", hexpand=True)
+        layout.append(text("On Windows, copy the local network address from Pair computers or Address & security details. In Windows 0.2.0, use Connection details. Enter it below; both computers need the same home or office network.", "muted"))
+        self.address = Gtk.Entry(placeholder_text="Enter the Windows local network address", hexpand=True)
         self.address.connect("changed", lambda *_: self._update_setup())
         layout.append(self.address)
         self.connection_summary = text("Choose your computer and enter its Windows address.")
@@ -183,7 +244,8 @@ class Window(Gtk.ApplicationWindow):
         for widget in (self.fingerprint, self.peer_fingerprint, self.permission_label, self.connection_label, self.sharing_label, self.geometry):
             detail_box.append(widget)
         detail_box.append(text("Arrange the shared screen boundary in BatCave on Windows.", "muted"))
-        self.remove_peer = button("Remove paired device", self._unpair)
+        self.remove_peer = button("Remove computer", self._unpair); self.remove_peer.set_halign(Gtk.Align.START)
+        self.remove_peer.set_visible(False)
         detail_box.append(self.remove_peer)
         self.detail_scroll = Gtk.ScrolledWindow(min_content_height=180)
         self.detail_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -217,12 +279,26 @@ class Window(Gtk.ApplicationWindow):
     def _show_step(self, step):
         if not 0 <= step < len(STEP_TITLES): return
         self.setup_step = step; self.pages.set_visible_child_name(str(step))
-        for index, widget in enumerate(self.step_buttons):
-            if index == step: widget.add_css_class("current")
-            else: widget.remove_css_class("current")
         self.back.set_visible(step > 0)
         self.save_setup.set_visible(step == 3)
+        self._update_title()
         self._update_setup()
+
+    def _show_devices_step(self, step):
+        self.stack.set_visible_child_name("setup"); self._show_step(step)
+
+    def _update_title(self):
+        files = self.stack.get_visible_child_name() == "files"
+        self.page_kicker.set_text("Your file shelf" if files else f"Step {self.setup_step + 1} of {len(STEP_TITLES)}")
+        self.page_title.set_text("Files" if files else STEP_TITLES[self.setup_step])
+        for index, widget in enumerate(self.step_buttons):
+            if not files and index == self.setup_step: widget.add_css_class("current")
+            else: widget.remove_css_class("current")
+
+    def _section_heading(self, number, title):
+        row = Gtk.Box(spacing=10); row.set_margin_top(6)
+        row.append(text(number, "section-number")); row.append(text(title, "section-heading"))
+        return row
 
     def _desktop_tile(self, title):
         tile = column(3); tile.add_css_class("desktop-tile")
@@ -252,7 +328,7 @@ class Window(Gtk.ApplicationWindow):
             address_valid = False
         return SetupState(self.identity is not None, self.lifecycle_ready, self.grant_started,
                           self.lifecycle_ready and self.backend.ready(), self._peer() is not None if self.approvals else False,
-                          address_valid, self.connecting, self.connected, bool(self.input and self.input.armed))
+                          address_valid, self.connecting, self.connected, bool(self.input and self.input.armed), self.pair_import_ready)
 
     def _update_setup(self):
         if not hasattr(self, "primary"): return
@@ -261,6 +337,7 @@ class Window(Gtk.ApplicationWindow):
         if self.primary.get_label() != action.label: self.primary.set_label(action.label)
         self.primary.set_sensitive(action.enabled)
         self.pause_button.set_sensitive(state.connected or state.connecting or state.armed)
+        self.sidebar_status.set_text("Ready for Windows input" if state.armed else "Linked · input is paused" if state.connected else "Sharing is paused")
         self.save_setup.set_sensitive(state.peer_selected and state.address_valid)
         if state.permission_ready:
             self.permission_summary.set_text("Ready to receive your keyboard and mouse.")
@@ -271,10 +348,17 @@ class Window(Gtk.ApplicationWindow):
         else:
             self.permission_summary.set_text("Grant access when you're ready.")
         peer = self._peer() if self.approvals else None
-        self.import_another.set_visible(state.peer_selected)
+        self.peer_controls.set_visible(bool(self.peer_ids))
+        self.pair_guide.set_visible(not state.peer_selected)
+        self.send_guide.set_visible(not self.pair_import_ready)
+        self.receive_guide.set_visible(self.pair_import_ready)
+        self.remove_peer.set_visible(state.peer_selected)
         self.remove_peer.set_sensitive(state.peer_selected)
-        self.pair_summary.set_text("Paired with " + peer.display_name + "." if peer else "Add the Windows computer you want to use.")
-        self.peer_fingerprint.set_text("Paired device SHA-256\n" + peer.fingerprint if peer else "No device paired.")
+        self.pair_title.set_text("Your Windows computer" if peer else "Add your first computer")
+        self.pair_explanation.set_text("Windows must also approve your Linux connection file before the computers can connect." if peer else "Keep BatCave open on both computers. Exchange a connection file once to approve each other.")
+        self.pair_summary.set_text("Approved: " + peer.display_name + "." if peer else "No computer has been approved yet. Exchange the files above to get started.")
+        self.peer_fingerprint.set_visible(state.peer_selected)
+        self.peer_fingerprint.set_text("Approved computer SHA-256\n" + peer.fingerprint if peer else "")
         if state.permission_ready:
             bounds = self.backend.bounds(); self.linux_geometry.set_text(f"{bounds.width} × {bounds.height}")
         else: self.linux_geometry.set_text("After desktop access")
@@ -295,10 +379,14 @@ class Window(Gtk.ApplicationWindow):
         action = primary_action(self.setup_step, self._setup_state())
         if not action.enabled: return
         operations = {"next": lambda: self._show_step(min(3, self.setup_step + 1)), "grant": self._grant,
-                      "import": self._import, "permission": lambda: self._show_step(0),
+                      "export": self._export, "import": self._import, "permission": lambda: self._show_step(0),
                       "pair": lambda: self._show_step(1), "connect": self._connect,
                       "start": self._allow, "pause": self._stop}
         self._guard(operations.get(action.operation, lambda: None))
+
+    def _prepare_import(self):
+        # Choosing the next instruction grants neither trust nor input access.
+        self.pair_import_ready = True; self._update_setup()
 
     def _initialize(self):
         state = None
@@ -363,34 +451,40 @@ class Window(Gtk.ApplicationWindow):
         def save(dialog):
             file = dialog.get_file()
             file.replace_contents(self.identity.card.serialize(), None, False, Gio.FileCreateFlags.PRIVATE, None)
-            self.status.set_text("Public pairing card exported. Its private key stays on this computer.")
-        self._dialog("Export public pairing card", Gtk.FileChooserAction.SAVE, save, name="Linux.batcave-peer.json")
+            self._prepare_import()
+            self.status.set_text("Linux connection file saved. Send it to Windows and choose Add computer there.")
+        self._dialog("Save this Linux computer's connection file", Gtk.FileChooserAction.SAVE, save, name="Linux.batcave-peer.json")
 
     def _import(self):
         def selected(dialog):
             path = dialog.get_file().get_path()
-            if not path: raise ValueError("Choose a local pairing card.")
+            if not path: raise ValueError("Choose a connection file saved on this computer.")
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
             with os.fdopen(fd, "rb") as stream:
-                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode): raise ValueError("Choose a regular pairing card file.")
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode): raise ValueError("Choose a regular connection file.")
                 data = stream.read(16385)
             card_value = Card.read(data)
-            if card_value.device_id == self.identity.card.device_id: raise ValueError("This is your own card.")
+            if card_value.device_id == self.identity.card.device_id: raise ValueError("This is this Linux computer's file. Choose the Windows connection file instead.")
             prompt = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.QUESTION,
                   buttons=Gtk.ButtonsType.YES_NO, text="Approve " + card_value.display_name + "?",
-                  secondary_text="Confirm this full SHA-256 fingerprint on the other computer:\n\n" + card_value.fingerprint)
+                  secondary_text="On Windows, open Address & security details (Connection details in 0.2.0) and compare this entire approval code (SHA-256). Choose Yes only if it matches. Input sharing still needs your approval later.\n\n" + card_value.fingerprint)
             prompt.set_default_response(Gtk.ResponseType.NO)
             def approved(widget, response):
                 if response == Gtk.ResponseType.YES:
                     self._stop(); self._guard(lambda: self.approvals.approve(card_value)); self._refresh_peers()
+                    if card_value.device_id in self.approvals.cards:
+                        self.status.set_text("Computer approved. Continue when both computers have approved each other.")
                 widget.destroy()
             prompt.connect("response", approved); prompt.show()
-        self._dialog("Import pairing card", Gtk.FileChooserAction.OPEN, selected)
+        self._dialog("Choose the Windows connection file", Gtk.FileChooserAction.OPEN, selected)
 
     def _unpair(self):
         peer = self._peer()
         if peer:
             self._stop(); self._guard(lambda: self.approvals.remove(peer.device_id)); self._refresh_peers()
+            if peer.device_id not in self.approvals.cards:
+                self.pair_import_ready = False; self._update_setup()
+                self.status.set_text("Computer removed. Exchange connection files to approve it again.")
 
     def _grant(self):
         self._stop()
@@ -411,7 +505,7 @@ class Window(Gtk.ApplicationWindow):
     def _connect(self):
         def action():
             if not self.lifecycle_ready or not self.backend.ready(): raise RuntimeError("Grant desktop access before linking devices.")
-            if not self._peer(): raise ValueError("Import and approve the Windows computer's card first.")
+            if not self._peer(): raise ValueError("Add and approve the Windows computer's connection file first.")
             self._stop()
             self._save_setup()
             self.epoch = self.connection.connect(self.address.get_text().strip(), self._peer(), self.backend.bounds())

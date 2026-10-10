@@ -38,15 +38,26 @@ jobs:
         run: sh Operating_System_Specific/Linux/scripts/test.sh
       - name: Source privacy gate
         run: python3 Scripts/check_public_source.py
-      - name: Render idle GTK setup without permission or networking
+      - name: Check GTK approval gates and render setup at both sizes
         env:
           GSK_RENDERER: cairo
           PYTHONPATH: Operating_System_Specific/Linux:Operating_System_Specific/Linux/tests
         run: |
-          for view in permissions pair layout link files details; do
-            dbus-run-session -- xvfb-run -a python3 Operating_System_Specific/Linux/tests/render_desktop.py \
-              "/tmp/batcave-linux-$view.png" "$view" small
+          mkdir -p /tmp/batcave-linux-screenshots
+          for view in permissions pair pair-receive pair-approved layout link files details details-approved; do
+            for size in default small; do
+              args=()
+              if [ "$size" = small ]; then args=(small); fi
+              dbus-run-session -- xvfb-run -a python3 Operating_System_Specific/Linux/tests/render_desktop.py \
+                "/tmp/batcave-linux-screenshots/$view-$size.png" "$view" "${args[@]}"
+            done
           done
+      - name: Upload synthetic GTK screenshots for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: BatCave-Linux-Setup-Screenshots
+          path: /tmp/batcave-linux-screenshots/*.png
+          if-no-files-found: error
       - name: Build Debian package
         run: sh Operating_System_Specific/Linux/scripts/package.sh
       - name: Install and remove on the disposable runner

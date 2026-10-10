@@ -16,6 +16,7 @@ class SetupState:
     connecting: bool = False
     connected: bool = False
     armed: bool = False
+    pair_import_ready: bool = False
 
 
 @dataclass(frozen=True)
@@ -33,7 +34,8 @@ def primary_action(step, state):
         if state.permission_pending: return Action("Waiting for permission…", "none", False)
         return Action("Grant access", "grant", state.desktop_ready)
     if step == 1:
-        return Action("Continue", "next") if state.peer_selected else Action("Import Windows card", "import")
+        if state.peer_selected: return Action("Continue", "next")
+        return Action("Add Windows computer", "import") if state.pair_import_ready else Action("Save Linux file…", "export")
     if state.armed: return Action("Pause sharing", "pause")
     if not state.permission_ready or not state.desktop_ready:
         if state.permission_pending: return Action("Waiting for permission…", "none", False)

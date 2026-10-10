@@ -28,6 +28,8 @@ with tempfile.TemporaryDirectory() as directory:
     if window is None:
         raise RuntimeError("GTK application did not create a window.")
     errors = []
+    assert not window.peer_controls.get_visible() and not window.remove_peer.get_visible()
+    assert not window.peer_fingerprint.get_visible() and window.pair_guide.get_visible()
     # A connected callback queued before manual stop cannot revive the UI/session.
     old_epoch = window.epoch
     window.inbox.put(old_epoch, "connected", Bounds(0, 0, 1920, 1080))
@@ -41,7 +43,7 @@ with tempfile.TemporaryDirectory() as directory:
     except ValueError:
         assert not window.files
     view = sys.argv[2] if len(sys.argv) > 2 else "permissions"
-    if view not in {"permissions", "pair", "layout", "link", "files", "details"}: raise ValueError("Unknown view")
+    if view not in {"permissions", "pair", "pair-receive", "pair-approved", "layout", "link", "files", "details", "details-approved"}: raise ValueError("Unknown view")
     if len(sys.argv) > 3 and sys.argv[3] == "small": window.set_default_size(880, 640)
     # Navigation cannot create approvals, grant desktop input or open a socket.
     for step in range(4):
@@ -56,8 +58,42 @@ with tempfile.TemporaryDirectory() as directory:
     try:
         peer_state = StateDirectory(Path(directory) / "peer")
         try:
-            peer = Identity.open(peer_state, MemoryVault(), "Windows test computer")
-            window.approvals.approve(peer.card); window._refresh_peers()
+            peer = Identity.open(peer_state, MemoryVault(), "Windows test computer with a long name to check the approved list")
+            # Import opens a real approval prompt; opening it or choosing No cannot pair.
+            connection_file = Path(directory) / "Windows.batcave-peer.json"
+            connection_file.write_bytes(peer.card.serialize())
+            class ChosenFile:
+                def __init__(self, path): self.path = path
+                def get_file(self): return Gio.File.new_for_path(str(self.path))
+            original_dialog = window._dialog
+            try:
+                window._show_step(1)
+                # Cancelling Save cannot advance the instruction or create trust.
+                window._dialog = lambda *args, **kwargs: None
+                window._activate_primary()
+                assert not window.pair_import_ready and not window.approvals.cards
+                exported_file = Path(directory) / "Linux.batcave-peer.json"
+                window._dialog = lambda title, action, callback, **kwargs: callback(ChosenFile(exported_file if action == Gtk.FileChooserAction.SAVE else connection_file))
+                window._activate_primary()
+                assert exported_file.read_bytes() == identity.card.serialize()
+                assert window.pair_import_ready and not window.approvals.cards
+                assert not window.input.armed and not window.connected
+                assert not window.send_guide.get_visible() and window.receive_guide.get_visible()
+                for response in (Gtk.ResponseType.NO, Gtk.ResponseType.YES):
+                    window._import()
+                    prompts = [item for item in Gtk.Window.list_toplevels() if isinstance(item, Gtk.MessageDialog)]
+                    assert len(prompts) == 1 and not window.approvals.cards
+                    prompt = prompts[0]
+                    assert peer.card.fingerprint in prompt.get_property("secondary-text")
+                    assert prompt.get_default_widget() == prompt.get_widget_for_response(Gtk.ResponseType.NO)
+                    assert not window.peer_controls.get_visible() and not window.remove_peer.get_visible()
+                    prompt.response(response)
+                    assert bool(window.approvals.cards) == (response == Gtk.ResponseType.YES)
+            finally:
+                window._dialog = original_dialog
+            assert window.peer_controls.get_visible() and window.remove_peer.get_visible()
+            assert window.peer_fingerprint.get_visible() and not window.pair_guide.get_visible()
+            assert not window.connected and not window.input.armed
         finally:
             peer_state.close()
         window.backend = window.input.backend = native.backend
@@ -83,7 +119,10 @@ with tempfile.TemporaryDirectory() as directory:
         assert not window.primary.get_sensitive()
         window._allow()
         assert not window.input.armed and not window.input.owns_cursor
-        window.approvals.remove(peer.card.device_id); window._refresh_peers()
+        window._unpair()
+        assert not window.approvals.cards and not window.connected and not window.input.armed
+        assert not window.peer_controls.get_visible() and not window.remove_peer.get_visible()
+        assert not window.peer_fingerprint.get_visible() and window.pair_guide.get_visible()
     finally:
         window._stop(); native.tearDown()
         window.backend = window.input.backend = original_backend
@@ -95,8 +134,12 @@ with tempfile.TemporaryDirectory() as directory:
             example = Path(directory) / "Example document.txt"; example.write_text("Disposable UI fixture.")
             window._stage_files([Gio.File.new_for_path(str(example))]); window.stack.set_visible_child_name("files")
         else:
-            window._show_step({"permissions": 0, "pair": 1, "layout": 2, "link": 3, "details": 3}[view])
-            if view == "details":
+            if view == "pair-receive": window._prepare_import()
+            if view.endswith("-approved"):
+                window.approvals.approve(peer.card); window._refresh_peers()
+                window.status.set_text("Computer approved. Continue when both computers have approved each other.")
+            window._show_step({"permissions": 0, "pair": 1, "pair-receive": 1, "pair-approved": 1, "layout": 2, "link": 3, "details": 3, "details-approved": 1}[view])
+            if view.startswith("details"):
                 window.details.set_expanded(True)
                 def reveal_details():
                     adjustment = window.detail_scroll.get_vadjustment()
@@ -109,7 +152,9 @@ with tempfile.TemporaryDirectory() as directory:
         try:
             assert not window.connected and not window.input.armed and not window.backend.ready()
             assert window.stack.get_visible_child_name() == ("files" if view == "files" else "setup")
-            assert not window.approvals.cards
+            assert bool(window.approvals.cards) == view.endswith("-approved")
+            assert window.peer_controls.get_visible() == bool(window.approvals.cards)
+            assert window.remove_peer.get_visible() == bool(window.approvals.cards)
             assert window.permission_label.get_text() == "Desktop access: not granted"
             # The fixed navigation and primary action remain inside the window.
             if window.get_width() > (880 if len(sys.argv) > 3 else 1000):
@@ -129,7 +174,7 @@ with tempfile.TemporaryDirectory() as directory:
             bounds = Graphene.Rect(); bounds.init(0, 0, window.get_width(), window.get_height())
             texture = window.get_native().get_renderer().render_texture(node, bounds)
             assert texture.save_to_png(sys.argv[1])
-            print("PASS: actual GTK setup rendered without a peer, network connection or input permission.")
+            print("PASS: GTK approval, empty/approved states and input gates checked; synthetic setup rendered without network or desktop input permission.")
         except BaseException as error:
             errors.append(error)
         finally:

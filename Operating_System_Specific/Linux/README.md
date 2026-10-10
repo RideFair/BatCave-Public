@@ -62,10 +62,27 @@ The Devices screen follows the Mac app's four steps: Permissions, Pair
 computers, Arrange screens and Link devices. Each step shows one primary action.
 Connection details remain optional, and Pause sharing stays accessible.
 
-Grant Linux desktop access when prompted. Export the Linux public card and import
-it into BatCave on Windows. Import Windows's card on Linux and explicitly
-approve the full SHA-256 fingerprint shown by Windows. Enter the Windows app's
-local address on Arrange screens and choose **Connect securely**. Continue to
+Grant Linux desktop access when prompted. In **Pair computers**, choose **Save
+Linux file** and send that connection file to Windows by email or USB. In BatCave
+on Windows, choose **Add computer** to import it and approve the full SHA-256
+fingerprint shown in Linux's Connection details. Save the Windows connection file
+from that same Windows screen and send it to Linux. Choose **Add Windows
+computer** on Linux and approve its full fingerprint after comparing it with
+Windows's **Address & security details**. Saving the Linux file advances the
+instructions only after the save succeeds; canceling leaves the first action in
+place. **I already have the Windows file** skips directly to importing, without
+granting trust. The approved-computer selector appears only after
+a computer has been approved. Connection files contain public identity information;
+private keys stay on their originating computers.
+
+Windows 0.2.0 uses the older labels **Save Windows card**, **Import device card**
+and **Connection details** for those same actions. The file format remains
+compatible; the Linux screen includes an optional help note for that version.
+
+Copy Windows's local network address from **Pair computers** or **Address & security
+details** (Connection details in Windows 0.2.0). On Linux,
+enter it in the **Windows address** field on Arrange screens; both computers need
+the same home or office network. Choose **Connect securely**. Continue to
 Link devices and choose **Enable Linux input**, then **Start sharing** on Windows.
 Connecting and saving setup leave input paused until you enable it.
 A fresh Windows handoff is required after enablement or reconnection.
