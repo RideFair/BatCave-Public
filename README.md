@@ -1,45 +1,54 @@
 # BatCave
 
-BatCave is a desktop input-sharing project in development. The Windows 11 x64
-preview uses explicitly approved device certificates and mutual TLS 1.3.
-It is not yet a verified Windows/macOS release.
+One keyboard. Both computers. BatCave lets you move your mouse across a shared
+screen edge and keep typing on another computer. Devices connect using mutual
+TLS 1.3 and must approve each other before sharing input.
 
-The Mac agent in this source snapshot has its network listener disabled.
-Connections are refused by default while its authenticated transport is pending.
-An explicit `--insecure-loopback-development` flag permits local experiments only.
-Do not deploy older plaintext versions on a network.
+## Install
 
-## Build
+Get packaged downloads from [Releases](https://github.com/RideFair/BatCave-Public/releases).
+Each release lists its supported platforms and remaining limitations.
 
-Windows requires the .NET 10 SDK. Run the native app with:
+| Platform | Installation |
+| --- | --- |
+| Windows 11 x64 | Download the Windows Setup executable, run it, and open BatCave. The installer includes .NET; no developer tools are needed. |
+| macOS 13+ | Open the DMG and install the app as described in its release. A public Mac download is still pending; the [Mac source branch](https://github.com/RideFair/BatCave-Public/tree/codex/macos-secure-preview-20261010) provides the guided app and installer. |
+| Linux | Install the `.deb` with your software installer, then open BatCave in your desktop session. A public Linux download is still pending; the [Linux source branch](https://github.com/RideFair/BatCave-Public/tree/codex/linux-secure-preview-20261010) targets Ubuntu 24.04 amd64. |
 
-```powershell
-dotnet run --project Operating_System_Specific/Windows/BatCaveWindowsAgent
-```
+Open BatCave on both computers and follow **Permissions → Pair computers →
+Arrange screens → Link devices**. Approve the device fingerprints, position your
+screens, enable input on the receiving computer, and choose **Start sharing** on
+Windows. **Pause sharing**, Escape, or F12 returns control to Windows.
 
-The [Windows guide](Operating_System_Specific/Windows/README.md) explains pairing
-and verification. [Packaging instructions](Operating_System_Specific/Windows/Packaging/README.md)
-describe the self-contained preview installer. The installer is unsigned and
-secure interoperability with macOS remains a release gate.
+The matching Mac and Linux changes are under review in
+[Mac PR #5](https://github.com/RideFair/BatCave-Public/pull/5) and
+[Linux PR #2](https://github.com/RideFair/BatCave-Public/pull/2).
+Main currently contains the Windows controller and the older disabled Mac network
+backend. Live secure Mac/Linux input and fresh-device setup still need verification
+before a completed cross-platform release can be claimed. Linux currently
+receives Windows input; it cannot control Windows.
 
-The [Mac guide](Operating_System_Specific/MacOS/README.md) describes the development
-build and its current limits. Shared routing code lives in `Universal/`.
+For source installation, see [Contributing](CONTRIBUTING.md#build-from-source).
+The [monitor guide](Docs/Monitor_Layout.md) explains placement. Network file
+transfer is not enabled; its [shared contract](Universal/Protocol/File_Transfer_Proposal.md)
+is being developed.
 
-The [monitor arrangement guide](Docs/Monitor_Layout.md) covers Windows screen
-selection and saved layouts. File transfer with source-icon drag previews is
-[proposed](Universal/Protocol/File_Transfer_Proposal.md); it is not enabled yet.
+## Help improve BatCave
+
+Contributions are welcome. Open an [issue](https://github.com/RideFair/BatCave-Public/issues)
+with a suggestion, or fork the repository and submit a pull request with your
+improvement. [CONTRIBUTING.md](CONTRIBUTING.md) explains the workflow and checks.
+Coding agents should also read [AGENTS.md](AGENTS.md).
 
 ## Security and privacy
 
-See [SECURITY.md](SECURITY.md) for the trust boundary and reporting guidance.
-Private keys stay on their originating device; pairing cards contain public
-identity data and should be exchanged through a trusted channel. Approving a
-peer grants it input-sharing capabilities. Clipboard sharing is optional.
+See [SECURITY.md](SECURITY.md) for private vulnerability reporting and the trust
+boundary. Private keys stay on their originating device. Clipboard sharing is
+optional, and reconnecting never starts input by itself.
 
-Local configuration and development records are excluded from source packages.
-Run `python Scripts/check_public_source.py` before publishing a source snapshot.
-That check complements a full-history secret scan; it does not certify the absence
-of every vulnerability or remove data from old Git commits.
+Local device state is excluded from source packages. Run
+`python Scripts/check_public_source.py` before publishing; scan Git history for
+secrets separately. Neither check guarantees the absence of every vulnerability.
 
 ## Maintainer and contact
 

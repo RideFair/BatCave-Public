@@ -5,9 +5,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repository = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
-if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repository '.build\secure-preview\packages' }
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repository '.build\installer\packages' }
 # A fresh directory prevents stale symbols or local files entering a package.
-$publishDirectory = Join-Path $repository ('.build\secure-preview\win-x64-' + [Guid]::NewGuid().ToString('N'))
+$publishDirectory = Join-Path $repository ('.build\installer\win-x64-' + [Guid]::NewGuid().ToString('N'))
 $project = Join-Path $repository 'Operating_System_Specific\Windows\BatCaveWindowsAgent'
 [xml]$projectXml = Get-Content -LiteralPath (Join-Path $project 'BatCaveWindowsAgent.csproj')
 $version = [string]$projectXml.Project.PropertyGroup.Version

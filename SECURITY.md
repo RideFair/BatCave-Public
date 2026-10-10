@@ -1,8 +1,9 @@
 # Security policy
 
-This project is a development preview. The Windows secure profile is the only
-network-enabled profile supported by this source snapshot. Older plaintext
-branches and packages are unsuitable for deployment.
+This policy describes the published source and the release checks still required.
+Windows requires authenticated transport. Secure Mac and Linux implementations
+are available in review branches; their live desktop checks remain pending.
+Older plaintext branches and packages are unsuitable for deployment.
 
 ## Trust boundary
 

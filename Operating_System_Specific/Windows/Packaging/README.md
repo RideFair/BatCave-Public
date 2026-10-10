@@ -1,23 +1,22 @@
-# Windows preview installer
+# Windows installer
 
 The installer targets Windows 11 x64, includes .NET 10, and installs for the
-current user. It is an unsigned development preview. The Mac secure transport
-and live cross-platform recovery tests remain release gates.
+current user. The installer is unsigned. Clean-device installation and live
+cross-platform recovery checks remain required before release approval.
 
-The preview has its own installer identity, installation directory, and
-`BatCave/SecurePreview` state. It does not replace the existing development app or
-load its topology. Keep the working app installed; quit its Windows agent for a
-live sharing test, then reopen it afterward. Pairing/setup can be inspected while
-the working app remains running.
+The app retains its existing installer identity and `BatCave/SecurePreview` state
+for compatible upgrades. New installations use the separate BatCave Desktop
+directory; upgrades reuse their existing directory. Existing development apps
+remain separate. Quit any other Windows agent before starting sharing.
 
 Use a patched .NET 10 SDK and an official Inno Setup 6 compiler:
 
 ```powershell
-.\Operating_System_Specific\Windows\Packaging\Build-SecurePreview.ps1 `
+.\Operating_System_Specific\Windows\Packaging\Build-Installer.ps1 `
     -InnoCompiler 'C:\Tools\Inno Setup 6\ISCC.exe'
 ```
 
-The script runs the three Windows regression suites and publishes into a fresh
+The script runs all four Windows regression suites and publishes into a fresh
 directory before creating an installer, SHA-256 sidecar, and source manifest.
 Release builds omit debug symbols and map compiler paths to a generic source root.
 Packaging excludes local pairing state and keys. Never add private state to a

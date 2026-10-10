@@ -19,6 +19,19 @@ internal sealed class DesktopWindow : Form
     private readonly NotifyIcon _tray = new() { Visible = true, Text = "BatCave", Icon = SystemIcons.Application };
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 500 };
     private DeviceHelloPayload? _hello;
+    private bool _listenerReady;
+    private string? _notice;
+    private DateTimeOffset _noticeUntil;
+    private int _setupStep;
+    private readonly Panel _pages = new() { Dock = DockStyle.Fill };
+    private readonly List<Control> _setupPages = [];
+    private readonly List<Button> _stepButtons = [];
+    private readonly Button _back = new() { Text = "Back", AutoSize = true };
+    private readonly Button _saveSetup = new() { Text = "Save setup", AutoSize = true };
+    private readonly Label _permissionStatus = new() { AutoSize = true };
+    private readonly Label _pairStatus = new() { AutoSize = true };
+    private readonly Label _linkStatus = new() { AutoSize = true };
+    private readonly Label _stepTitle = new() { AutoSize = true };
     private bool _quitting;
     private bool _sharing;
     private volatile string? _selectedPeerId;
@@ -26,11 +39,10 @@ internal sealed class DesktopWindow : Form
     private readonly string _settingsPath;
     private readonly MonitorLayoutStore _layoutStore;
     private readonly ComboBox _monitor = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 270 };
-    private readonly TrackBar _alignment = new() { Minimum = -100, Maximum = 100, TickStyle = TickStyle.None, Dock = DockStyle.Fill, AccessibleName = "Screen alignment" };
+    private readonly TrackBar _alignment = new() { Minimum = -100, Maximum = 100, TickStyle = TickStyle.None, Dock = DockStyle.Fill, AutoSize = false, AccessibleName = "Screen alignment" };
     private readonly MonitorLayoutCanvas _canvas = new() { Dock = DockStyle.Fill };
     private readonly Label _layoutStatus = new() { AutoSize = true, MaximumSize = new Size(590, 0) };
     private readonly Label _alignmentLabel = new() { AutoSize = true };
-    private readonly Button _saveLayout = new() { Text = "Save layout", AutoSize = true };
     private IReadOnlyList<MonitorDescriptor> _monitors = Array.Empty<MonitorDescriptor>();
     private bool _loadingLayout;
     private bool _layoutDirty;
@@ -58,78 +70,123 @@ internal sealed class DesktopWindow : Form
         _lan = new LanBridgePeer(identity, () => _approvals.Peers.Where(peer => peer.DeviceId == _selectedPeerId).ToArray());
         _agent = new LocalBridgeAgent(_lan, _topologyPath);
         if (!inspectionOnly) _ = _agent.Handle;
-        Text = "BatCave Preview";
+        Text = "BatCave";
+        _listenerReady = inspectionOnly;
         var appIcon = Environment.ProcessPath is { } executable ? Icon.ExtractAssociatedIcon(executable) : null;
         if (appIcon is not null) { Icon = appIcon; _tray.Icon = appIcon; }
         Font = new Font("Segoe UI", 10);
-        BackColor = Color.FromArgb(245, 247, 251);
-        ForeColor = Color.FromArgb(34, 49, 72);
+        BackColor = Color.FromArgb(244, 247, 251);
+        ForeColor = Color.FromArgb(24, 40, 61);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(1060, 810);
-        MinimumSize = new Size(920, 690);
+        ClientSize = new Size(1000, 760);
+        MinimumSize = new Size(880, 640);
         StartPosition = FormStartPosition.CenterScreen;
-        var shell = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(26, 20, 26, 18), ColumnCount = 1, RowCount = 3 };
-        shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 87));
+        var shell = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
+        shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
         shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         Controls.Add(shell);
-        var header = new Panel { Dock = DockStyle.Fill };
-        header.Controls.Add(new Label { Text = "BatCave", Font = new Font(Font.FontFamily, 25, FontStyle.Bold), Location = new Point(0, 0), AutoSize = true });
-        header.Controls.Add(new Label { Text = "One keyboard. Every screen.", ForeColor = Color.FromArgb(101, 119, 145), Location = new Point(2, 51), AutoSize = true });
-        var badge = new Label { Text = "SECURE PREVIEW", Font = new Font(Font.FontFamily, 9, FontStyle.Bold), ForeColor = Color.FromArgb(43, 106, 192), BackColor = Color.FromArgb(227, 238, 252), AutoSize = true, Padding = new Padding(12, 7, 12, 7) };
-        header.Controls.Add(badge);
-        header.Resize += (_, _) => badge.Location = new Point(header.ClientSize.Width - badge.PreferredWidth - 4, 12);
+        var header = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(24, 16, 24, 12) };
+        header.Controls.Add(new Label { Text = "BatCave", Font = new Font(Font.FontFamily, 25, FontStyle.Bold), Location = new Point(24, 12), AutoSize = true });
+        header.Controls.Add(new Label { Text = "Your computers, together", ForeColor = Color.FromArgb(86, 103, 127), Location = new Point(26, 56), AutoSize = true });
+        var pause = Button("Pause sharing", () => { Pause("paused by user"); UpdateSetup(); });
+        header.Controls.Add(pause);
+        header.Resize += (_, _) => pause.Location = new Point(header.ClientSize.Width - pause.PreferredSize.Width - 24, 25);
         shell.Controls.Add(header, 0, 0);
         var columns = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
+        columns.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 215));
         columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        columns.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 302));
         shell.Controls.Add(columns, 0, 1);
-        var main = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(20), Margin = new Padding(0, 0, 18, 0), ColumnCount = 1, RowCount = 8 };
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-        main.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 63));
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 49));
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
-        columns.Controls.Add(main, 0, 0);
-        main.Controls.Add(Title("Arrange your screens"), 0, 0);
-        main.Controls.Add(new Label { Text = "Drag the other computer to match your desk.\nChoose the Windows monitor you want to cross from.", AutoSize = true, ForeColor = Color.FromArgb(104, 122, 147) }, 0, 1);
-        main.Controls.Add(_canvas, 0, 2);
-        var pick = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Padding = new Padding(0, 7, 0, 0) };
-        pick.Controls.Add(new Label { Text = "Cross from", AutoSize = true, Margin = new Padding(0, 4, 10, 0) });
-        pick.Controls.Add(_monitor);
-        main.Controls.Add(pick, 0, 3);
-        _side.Items.AddRange(new object[] { "Right", "Left", "Above", "Below" });
-        _side.SelectedIndex = 0;
-        var direction = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Padding = new Padding(0, 6, 0, 0) };
+        var navigation = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12, 20, 8, 16), FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        columns.Controls.Add(navigation, 0, 0);
+        for (var i = 0; i < DesktopSetupFlow.Titles.Length; i++)
+        {
+            var step = i;
+            var button = Button((i + 1) + "  " + DesktopSetupFlow.Titles[i], () => ShowStep(step));
+            button.TextAlign = ContentAlignment.MiddleLeft; button.AutoSize = false;
+            button.Size = new Size(191, 48); button.Margin = new Padding(0, 0, 0, 8);
+            button.FlatAppearance.BorderSize = 0;
+            navigation.Controls.Add(button); _stepButtons.Add(button);
+        }
+        var content = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24, 20, 24, 18), ColumnCount = 1, RowCount = 5 };
+        content.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
+        content.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        content.RowStyles.Add(new RowStyle(SizeType.Absolute, 37));
+        content.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
+        content.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+        columns.Controls.Add(content, 1, 0);
+        _stepTitle.Font = new Font(Font.FontFamily, 9, FontStyle.Bold);
+        _stepTitle.ForeColor = Color.FromArgb(86, 103, 127);
+        content.Controls.Add(_stepTitle, 0, 0); content.Controls.Add(_pages, 0, 1);
+
+        var permissions = Page("One keyboard. Both computers.", "Use this computer’s keyboard and mouse across your linked devices.");
+        permissions.Controls.Add(_permissionStatus);
+        permissions.Controls.Add(Body("Windows needs no extra input permission. If Windows asks about network access, allow BatCave on your private network."));
+        permissions.Controls.Add(Body("Sharing starts only when you choose Start sharing. Pause sharing always returns control to this computer."));
+        AddPage(permissions);
+
+        var pairing = Page("Pair your computers", "Exchange public device cards and approve the fingerprint shown on the other computer.");
+        var cardActions = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Width = 560 };
+        cardActions.Controls.Add(Button("Copy Windows card", CopyCard));
+        cardActions.Controls.Add(Button("Paste device card", PasteCard));
+        cardActions.Controls.Add(Button("Save Windows card…", ExportCard));
+        pairing.Controls.Add(cardActions);
+        pairing.Controls.Add(Body("Paired computer"));
+        _peers.Width = 450; _peers.Dock = DockStyle.None; pairing.Controls.Add(_peers);
+        pairing.Controls.Add(_pairStatus);
+        pairing.Controls.Add(Body("Approve this Windows card on the other device too. Device cards contain public information; your private key stays here."));
+        var moreCards = new FlowLayoutPanel { AutoSize = true, Width = 560 };
+        moreCards.Controls.Add(Button("Import another card…", ImportCard));
+        moreCards.Controls.Add(Button("Remove paired device", Unpair)); pairing.Controls.Add(moreCards);
+        AddPage(pairing);
+
+        var arrangementScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        var arrangement = new TableLayoutPanel { Dock = DockStyle.Top, Height = 440, BackColor = Color.White, Padding = new Padding(20, 16, 20, 12), ColumnCount = 1, RowCount = 8 };
+        var positionExpanded = false;
+        arrangementScroll.Controls.Add(arrangement);
+        arrangementScroll.Resize += (_, _) => arrangement.Height = Math.Max(positionExpanded ? 545 : 440, arrangementScroll.ClientSize.Height);
+        arrangement.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        arrangement.RowStyles.Add(new RowStyle(SizeType.Absolute, 41));
+        arrangement.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        arrangement.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
+        arrangement.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        arrangement.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
+        arrangement.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
+        arrangement.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
+        var arrangeTitle = Heading("Arrange screens"); arrangeTitle.Margin = Padding.Empty;
+        arrangement.Controls.Add(arrangeTitle, 0, 0);
+        arrangement.Controls.Add(Body("Drag the other computer to match your desk."), 0, 1);
+        arrangement.Controls.Add(_canvas, 0, 2);
+        var pick = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+        pick.Controls.Add(new Label { Text = "Cross from", AutoSize = true, Margin = new Padding(0, 9, 12, 0) });
+        _monitor.Width = 285; pick.Controls.Add(_monitor); arrangement.Controls.Add(pick, 0, 3);
+        _side.Items.AddRange(new object[] { "Right", "Left", "Above", "Below" }); _side.SelectedIndex = 0;
+        var direction = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
         direction.Controls.Add(new Label { Text = "Other computer", AutoSize = true, Margin = new Padding(0, 9, 12, 0) });
-        direction.Controls.Add(_side);
-        direction.Controls.Add(Button("Center", () => _alignment.Value = 0));
-        main.Controls.Add(direction, 0, 4);
+        direction.Controls.Add(_side); direction.Controls.Add(Button("Center", () => _alignment.Value = 0));
+        direction.Visible = false; arrangement.Controls.Add(direction, 0, 5);
         var align = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
-        align.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
-        align.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        align.Controls.Add(_alignmentLabel, 0, 0); align.Controls.Add(_alignment, 0, 1);
-        main.Controls.Add(align, 0, 5);
-        var saveRow = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
-        StyleButton(_saveLayout, true); saveRow.Controls.Add(_saveLayout);
-        saveRow.Controls.Add(Button("Reset position", () => { _side.SelectedIndex = 0; _alignment.Value = 0; }));
-        main.Controls.Add(saveRow, 0, 6); main.Controls.Add(_layoutStatus, 0, 7);
-        var sidebar = new FlowLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(18), FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
-        columns.Controls.Add(sidebar, 1, 0);
-        sidebar.Controls.Add(Title("Your computers"));
-        sidebar.Controls.Add(new Label { Text = "Choose a paired computer", AutoSize = true, Margin = new Padding(3, 14, 3, 7) });
-        _peers.Width = 252; _peers.Dock = DockStyle.None; sidebar.Controls.Add(_peers);
-        _start.Width = 252; _start.AutoSize = false; StyleButton(_start, true); _start.Margin = new Padding(3, 18, 3, 6); sidebar.Controls.Add(_start);
-        var pause = Button("Pause sharing", () => Pause("paused by user")); pause.Width = 252; pause.AutoSize = false; sidebar.Controls.Add(pause);
-        _status.MaximumSize = new Size(246, 0); _status.Margin = new Padding(3, 12, 3, 15); sidebar.Controls.Add(_status);
-        sidebar.Controls.Add(Title("Pair a computer"));
-        sidebar.Controls.Add(new Label { Text = "Exchange cards through a trusted channel. Approve each computer's card on the other.", MaximumSize = new Size(246, 0), AutoSize = true, ForeColor = Color.FromArgb(104, 122, 147), Margin = new Padding(3, 10, 3, 10) });
-        foreach (var b in new[] { Button("Export my pairing card…", ExportCard), Button("Import a pairing card…", ImportCard), Button("Connection details…", ShowConnectionDetails), Button("Unpair selected computer", Unpair) })
-        { b.Width = 252; b.AutoSize = false; sidebar.Controls.Add(b); }
-        var login = new CheckBox { Text = "Open when I sign in", AutoSize = true, Margin = new Padding(3, 20, 3, 8) };
+        align.RowStyles.Add(new RowStyle(SizeType.Absolute, 22)); align.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        align.Controls.Add(_alignmentLabel, 0, 0); align.Controls.Add(_alignment, 0, 1); align.Visible = false; arrangement.Controls.Add(align, 0, 6);
+        Button? positionControls = null;
+        positionControls = Button("Position controls", () =>
+        {
+            positionExpanded = !positionExpanded;
+            direction.Visible = align.Visible = positionExpanded;
+            arrangement.RowStyles[5].Height = positionExpanded ? 48 : 0;
+            arrangement.RowStyles[6].Height = positionExpanded ? 57 : 0;
+            arrangement.Height = Math.Max(positionExpanded ? 545 : 440, arrangementScroll.ClientSize.Height);
+            positionControls!.Text = positionExpanded ? "Hide position controls" : "Position controls";
+        });
+        positionControls.FlatAppearance.BorderSize = 0;
+        arrangement.Controls.Add(positionControls, 0, 4);
+        _layoutStatus.MaximumSize = new Size(600, 0); arrangement.Controls.Add(_layoutStatus, 0, 7);
+        AddPage(arrangementScroll);
+
+        var linking = Page("Link devices", "Enable input on your other device, then start sharing here.");
+        linking.Controls.Add(_linkStatus);
+        linking.Controls.Add(Body("Move your mouse through the shared screen edge to use your other computer. Escape, F12, or Pause sharing restores local control."));
+        var login = new CheckBox { Text = "Open BatCave at login", AutoSize = true, Margin = new Padding(0, 16, 0, 8) };
         using (var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
             login.Checked = key?.GetValue("BatCaveSecure") is not null;
         login.CheckedChanged += (_, _) => Guard(() =>
@@ -138,13 +195,25 @@ internal sealed class DesktopWindow : Form
             if (login.Checked) key.SetValue("BatCaveSecure", "\"" + Environment.ProcessPath + "\" --desktop");
             else key.DeleteValue("BatCaveSecure", false);
         });
-        sidebar.Controls.Add(login);
+        linking.Controls.Add(login);
         var clipboard = new CheckBox { Text = "Share text clipboard", AutoSize = true };
-        sidebar.Controls.Add(clipboard);
-        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
-        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
-        footer.Controls.Add(new Label { Text = "Escape, F12, or Pause returns control to this computer.", AutoSize = true, ForeColor = Color.FromArgb(101, 119, 145), Margin = new Padding(0, 14, 0, 0) }, 0, 0);
-        footer.Controls.Add(Button("Quit BatCave", Quit), 1, 0); shell.Controls.Add(footer, 0, 2);
+        linking.Controls.Add(clipboard); linking.Controls.Add(Body("A lost connection pauses sharing. Reconnecting never starts input by itself."));
+        AddPage(linking);
+        var details = Button("Connection details…", ShowConnectionDetails);
+        details.FlatAppearance.BorderSize = 0; details.BackColor = BackColor;
+        content.Controls.Add(details, 0, 2);
+        _status.Dock = DockStyle.Fill; _status.AutoSize = false; _status.ForeColor = Color.FromArgb(66, 91, 121);
+        content.Controls.Add(_status, 0, 3);
+        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1 };
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); actions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        StyleButton(_back); _back.Click += (_, _) => ShowStep(_setupStep - 1); actions.Controls.Add(_back, 0, 0);
+        StyleButton(_saveSetup); _saveSetup.Click += (_, _) => Guard(() => { SaveLayout(); SaveSettings(); UpdateSetup(); });
+        actions.Controls.Add(_saveSetup, 2, 0); StyleButton(_start, true); actions.Controls.Add(_start, 3, 0);
+        content.Controls.Add(actions, 0, 4);
+        var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
+        var quit = Button("Quit BatCave", Quit); quit.FlatAppearance.BorderSize = 0; quit.BackColor = BackColor; footer.Controls.Add(quit);
+        shell.Controls.Add(footer, 0, 2);
         var settings = ReadSettings();
         _selectedPeerId = settings?.SelectedPeerId;
         _legacyLayoutPeer = settings?.SelectedPeerId;
@@ -169,21 +238,7 @@ internal sealed class DesktopWindow : Form
         {
             _loadingLayout = true; _side.SelectedIndex = (int)side; _alignment.Value = alignment; _loadingLayout = false; LayoutEdited();
         };
-        _saveLayout.Click += (_, _) => Guard(SaveLayout);
-        _start.Click += (_, _) => Guard(() =>
-        {
-            if (!_lan.HasPeer || _hello is null || _lan.CurrentPeerDeviceId != _selectedPeerId) return;
-            var agents = System.Diagnostics.Process.GetProcessesByName("BatCave.WindowsAgent");
-            try
-            {
-                if (agents.Any(process => process.Id != Environment.ProcessId))
-                {
-                    MessageBox.Show(this, "Another BatCave Windows agent is running. Quit the development or previous app before starting this preview."); return;
-                }
-            }
-            finally { foreach (var process in agents) process.Dispose(); }
-            SaveLayout(); _sharing = true; _agent.PostStartPersistentHandoff();
-        });
+        _start.Click += (_, _) => Guard(ActivatePrimary);
         _lan.PeerHello += hello => PostUi(() =>
         {
             if (hello.DeviceId == _selectedPeerId && _lan.HasPeer && _lan.CurrentPeerDeviceId == hello.DeviceId)
@@ -198,14 +253,8 @@ internal sealed class DesktopWindow : Form
         menu.Items.Add("Open BatCave", null, (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); });
         menu.Items.Add("Pause", null, (_, _) => Pause("paused from tray")); menu.Items.Add("Quit", null, (_, _) => Quit());
         _tray.ContextMenuStrip = menu; _tray.DoubleClick += (_, _) => { Show(); Activate(); };
-        _timer.Tick += (_, _) =>
-        {
-            _start.Enabled = _lan.HasPeer && _hello is not null && _layoutValid;
-            _sharing = _agent.IsBridgeActive;
-            _status.Text = _lan.HasPeer ? (_sharing ? "● Sharing securely" : "● Connected securely\nReady when you are.")
-                : _selectedPeerId is null ? "Pair another computer to begin." : "Waiting for the selected computer…";
-            _status.ForeColor = _lan.HasPeer ? Color.FromArgb(29, 137, 112) : Color.FromArgb(104, 122, 147);
-        };
+        _timer.Tick += (_, _) => UpdateSetup();
+        ShowStep(_selectedPeerId is null ? 0 : 3);
         Shown += (_, _) => Guard(() =>
         {
             if (!inspectionOnly)
@@ -213,8 +262,9 @@ internal sealed class DesktopWindow : Form
                 var area = Screen.FromControl(this).WorkingArea;
                 Size = new Size(Math.Min(Width, area.Width - 20), Math.Min(Height, area.Height - 20));
                 _lan.StartListeningAsync(LanBridgePeer.SecurePort).GetAwaiter().GetResult();
+                _listenerReady = true;
             }
-            _timer.Start();
+            UpdateSetup(); _timer.Start();
         });
         SystemEvents.PowerModeChanged += OnPowerModeChanged; SystemEvents.SessionSwitch += OnSessionSwitch;
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
@@ -228,7 +278,95 @@ internal sealed class DesktopWindow : Form
         };
     }
 
-    private static Label Title(string text) => new() { Text = text, Font = new Font("Segoe UI", 13, FontStyle.Bold), AutoSize = true, Margin = new Padding(3, 3, 3, 8) };
+    private static Label Heading(string text) => new() { Text = text, Font = new Font("Segoe UI", 18, FontStyle.Bold), AutoSize = true, Margin = new Padding(0, 0, 0, 12) };
+    private static Label Body(string text) => new() { Text = text, AutoSize = true, MaximumSize = new Size(565, 0), ForeColor = Color.FromArgb(86, 103, 127), Margin = new Padding(0, 0, 0, 14) };
+    private static FlowLayoutPanel Page(string title, string explanation)
+    {
+        var page = new FlowLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(22), FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
+        page.Controls.Add(Heading(title)); page.Controls.Add(Body(explanation));
+        page.Resize += (_, _) =>
+        {
+            var width = Math.Max(100, page.ClientSize.Width - page.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 6);
+            foreach (Control child in page.Controls)
+            {
+                if (child is Label label) label.MaximumSize = new Size(width, 0);
+                else if (child is FlowLayoutPanel row) row.Width = width;
+            }
+        };
+        return page;
+    }
+    private void AddPage(Control page) { _setupPages.Add(page); _pages.Controls.Add(page); }
+    internal void ShowStep(int step)
+    {
+        if (step < 0 || step >= DesktopSetupFlow.Titles.Length) return;
+        _setupStep = step; _notice = null;
+        for (var i = 0; i < _setupPages.Count; i++) _setupPages[i].Visible = i == step;
+        _setupPages[step].BringToFront(); UpdateSetup();
+    }
+    private DesktopSetupState SetupState() => new(_listenerReady, _peers.SelectedItem is PeerItem selected && selected.Card.DeviceId == _selectedPeerId,
+        _lan.HasPeer && _hello?.DeviceId == _selectedPeerId && _lan.CurrentPeerDeviceId == _selectedPeerId, _layoutValid, _agent.IsBridgeActive);
+    private void UpdateSetup()
+    {
+        var state = SetupState();
+        _sharing = state.Sharing;
+        var action = DesktopSetupFlow.Action(_setupStep, state);
+        _start.Text = action.Label; _start.Enabled = action.Enabled;
+        _back.Visible = _setupStep > 0; _saveSetup.Visible = _setupStep == 3;
+        _saveSetup.Enabled = state.PeerSelected && state.LayoutValid;
+        _stepTitle.Text = "STEP " + (_setupStep + 1) + " OF 4";
+        for (var i = 0; i < _stepButtons.Count; i++)
+        {
+            _stepButtons[i].BackColor = i == _setupStep ? Color.FromArgb(231, 238, 251) : BackColor;
+            _stepButtons[i].ForeColor = i == _setupStep ? Color.FromArgb(36, 84, 150) : Color.FromArgb(102, 119, 142);
+        }
+        _permissionStatus.Text = state.ListenerReady ? "Windows is ready to link your devices." : "Waiting for network access. Reopen BatCave if the connection service could not start.";
+        _pairStatus.Text = (_peers.SelectedItem as PeerItem) is { } peer ? peer.Card.DisplayName + " is approved." : "Add the computer you want to link.";
+        _linkStatus.Text = state.Sharing ? "Your keyboard and mouse are shared." : state.Connected ? "Your device is connected. Enable its input access, then choose Start sharing." : "Open BatCave on your other device and connect to this Windows computer.";
+        _status.Text = state.Connected ? (state.Sharing ? "Sharing securely" : "Connected securely. Sharing is paused.")
+            : state.PeerSelected ? "Waiting for the other device to connect." : "Setup is ready. Continue to link your computers.";
+        _status.ForeColor = state.Connected ? Color.FromArgb(29, 137, 112) : Color.FromArgb(66, 91, 121);
+        if (_notice is not null && DateTimeOffset.UtcNow < _noticeUntil) _status.Text = _notice;
+    }
+    private void ActivatePrimary()
+    {
+        var action = DesktopSetupFlow.Action(_setupStep, SetupState());
+        if (!action.Enabled) return;
+        _notice = null;
+        switch (action.Operation)
+        {
+            case SetupOperation.Next:
+                if (_setupStep == 2) SaveLayout();
+                ShowStep(_setupStep + 1); break;
+            case SetupOperation.Pair:
+                if (_setupStep != 1) ShowStep(1); else ImportCard();
+                break;
+            case SetupOperation.Pause: Pause("paused by user"); break;
+            case SetupOperation.Start:
+                var agents = System.Diagnostics.Process.GetProcessesByName("BatCave.WindowsAgent");
+                try
+                {
+                    if (agents.Any(process => process.Id != Environment.ProcessId))
+                    {
+                        MessageBox.Show(this, "Another BatCave Windows app is running. Quit it before starting sharing in this app."); return;
+                    }
+                }
+                finally { foreach (var process in agents) process.Dispose(); }
+                SaveLayout(); _agent.PostStartPersistentHandoff(); break;
+        }
+        UpdateSetup();
+    }
+    private void CopyCard() => Guard(() =>
+    {
+        Clipboard.SetText(DeviceIdentityStore.SerializePublicCard(_identity.ExportPublicCard(Environment.MachineName)));
+        Notice("Windows device card copied. Paste it into BatCave on your other device.");
+    });
+    private void Notice(string text) { _notice = text; _noticeUntil = DateTimeOffset.UtcNow.AddSeconds(12); _status.Text = text; }
+    private void PasteCard() => Guard(() =>
+    {
+        if (!Clipboard.ContainsText()) throw new InvalidDataException("Copy a BatCave device card on your other computer first.");
+        ApproveCard(Clipboard.GetText()); UpdateSetup();
+    });
+
     private static void StyleButton(Button button, bool primary = false)
     {
         button.FlatStyle = FlatStyle.Flat; button.FlatAppearance.BorderColor = Color.FromArgb(214, 223, 236);
@@ -278,6 +416,11 @@ internal sealed class DesktopWindow : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) { return; }
         if (new FileInfo(dialog.FileName).Length > 16384) { throw new InvalidDataException("Pairing card exceeds 16 KiB."); }
         var json = File.ReadAllText(dialog.FileName);
+        ApproveCard(json); UpdateSetup();
+    });
+
+    private void ApproveCard(string json)
+    {
         var peer = DeviceIdentityStore.ReadPublicCard(json);
         if (peer.DeviceId == _identity.DeviceId) { throw new InvalidDataException("This is your own pairing card."); }
         var card = JsonSerializer.Deserialize<DeviceIdentityStore.PairingCard>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
@@ -292,7 +435,7 @@ internal sealed class DesktopWindow : Form
         RefreshPeers();
         LoadPeerLayout();
         SaveSettings();
-    });
+    }
 
     private void Unpair() => Guard(() =>
     {
@@ -364,14 +507,13 @@ internal sealed class DesktopWindow : Form
             _layoutStatus.Text = !_layoutValid ? "That edge meets another Windows monitor. Choose an outside edge."
                 : _selectedPeerId is null ? "Pair a computer to save an arrangement."
                 : _layoutDirty ? "Unsaved layout. Sharing is paused until you start it again."
-                : _hello is null ? "Arrangement saved per computer. Connect to preview its screen size." : "Layout ready. Cross along the green edge.";
+                : _hello is null ? "Connect the other device to show its screen size." : "Layout ready. Cross along the green edge.";
         }
         catch (InvalidDataException ex)
         {
             _canvas.Scene = null; _layoutValid = false; _layoutStatus.ForeColor = Color.FromArgb(173, 76, 55); _layoutStatus.Text = ex.Message;
         }
-        _saveLayout.Enabled = _selectedPeerId is not null && _layoutValid;
-        _start.Enabled = _lan.HasPeer && _hello is not null && _layoutValid;
+        if (_stepButtons.Count != 0) UpdateSetup();
         _canvas.Invalidate();
     }
     private void SaveLayout()

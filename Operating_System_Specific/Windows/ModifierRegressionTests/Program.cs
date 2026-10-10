@@ -13,8 +13,60 @@ internal static class ModifierRegression
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        CheckSetupActions();
         Run().GetAwaiter().GetResult();
         if (args.Length == 2 && args[0] == "--render-preview") { RenderPreview(args[1]); }
+        if (args.Length == 2 && args[0] == "--render-setup") { RenderSetup(args[1]); }
+    }
+
+    private static void CheckSetupActions()
+    {
+        for (var bits = 0; bits < 32; bits++)
+        {
+            var state = new DesktopSetupState((bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0, (bits & 8) != 0, (bits & 16) != 0);
+            for (var step = 0; step < 4; step++)
+            {
+                var action = DesktopSetupFlow.Action(step, state);
+                if (action.Operation == SetupOperation.Start)
+                    Require(step == 3 && state.ListenerReady && state.PeerSelected && state.Connected && state.LayoutValid && !state.Sharing, "setup starts only a ready approved connection after explicit final-page action");
+                if (step < 3) Require(action.Operation is not SetupOperation.Start, "navigation never starts sharing");
+            }
+        }
+        Require(DesktopSetupFlow.Action(3, new(true, true, false, true, false)).Enabled == false, "lost connection cannot start through saved setup");
+        Require(DesktopSetupFlow.Action(3, new(true, true, true, true, false)).Label == "Start sharing", "fresh reconnection needs an explicit start");
+        Require(DesktopSetupFlow.Action(3, new(true, true, true, true, true)).Operation == SetupOperation.Pause, "active sharing offers pause");
+        Console.WriteLine("PASS: device-linking navigation preserves explicit input activation.");
+    }
+
+    private static void RenderSetup(string output)
+    {
+        Directory.CreateDirectory(output);
+        var directory = Path.Combine(Path.GetTempPath(), "BatCaveSetupSmoke-" + Guid.NewGuid().ToString("N"));
+        using var identity = DeviceIdentityStore.OpenOrCreate(directory);
+        try
+        {
+            var approvals = new ApprovedPeerStore(directory);
+            using var window = new DesktopWindow(identity, approvals, directory, inspectionOnly: true);
+            window.StartPosition = FormStartPosition.Manual;
+            window.Location = new System.Drawing.Point(-30000, -30000);
+            window.Show();
+            foreach (var small in new[] { false, true })
+            {
+                if (small) window.Size = window.MinimumSize;
+                for (var step = 0; step < 4; step++)
+                {
+                    window.ShowStep(step); Application.DoEvents();
+                    using var bitmap = new System.Drawing.Bitmap(window.Width, window.Height);
+                    window.DrawToBitmap(bitmap, new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height));
+                    bitmap.Save(Path.Combine(output, $"step-{step + 1}{(small ? "-small" : "")}.png"), System.Drawing.Imaging.ImageFormat.Png);
+                    Require(!((LocalBridgeAgent)Get(window, "_agent")).IsHandleCreated, "setup navigation creates no input hooks in inspection mode");
+                    Require(!approvals.Peers.Any(), "navigating setup never approves a peer");
+                }
+            }
+            Call(window, "Quit");
+            Console.WriteLine("PASS: all four native setup screens rendered at default and minimum sizes without input hooks or a listener.");
+        }
+        finally { identity.DeleteIdentity(directory); Directory.Delete(directory); }
     }
 
     private static void RenderPreview(string path)
