@@ -125,12 +125,19 @@ final class NearbySetupTests: XCTestCase, @unchecked Sendable {
                     }
                     if state == "arrangement" { model.page = .arrangement }
                     if state == "permissions" { model.page = .permissions }
-                    let view = NSHostingView(rootView: SetupView(model: model))
+                    let view = makeSetupHostingView(model: model)
+                    XCTAssertEqual(view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), .aqua)
                     view.frame = NSRect(origin: .zero, size: size)
-                    view.layoutSubtreeIfNeeded()
-                    let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-                    view.cacheDisplay(in: view.bounds, to: bitmap)
-                    let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    var rendered: Result<Data, Error>?
+                    view.effectiveAppearance.performAsCurrentDrawingAppearance {
+                        rendered = Result {
+                            view.layoutSubtreeIfNeeded()
+                            let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+                            view.cacheDisplay(in: view.bounds, to: bitmap)
+                            return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                        }
+                    }
+                    let png = try XCTUnwrap(rendered).get()
                     XCTAssertGreaterThan(png.count, 5000)
                     try png.write(to: URL(fileURLWithPath: folder).appendingPathComponent("Mac-\(state)-\(Int(size.width))x\(Int(size.height)).png"))
                 }

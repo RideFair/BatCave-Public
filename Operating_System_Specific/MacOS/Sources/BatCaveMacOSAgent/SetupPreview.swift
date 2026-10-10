@@ -485,6 +485,8 @@ private enum SetupTheme {
     static let sidebar = Color(red: 24 / 255, green: 29 / 255, blue: 47 / 255)
     static let accent = Color(red: 99 / 255, green: 79 / 255, blue: 225 / 255)
     static let ink = Color(red: 31 / 255, green: 38 / 255, blue: 57 / 255)
+    static let muted = Color(red: 94 / 255, green: 106 / 255, blue: 129 / 255)
+    static let success = Color(red: 32 / 255, green: 121 / 255, blue: 71 / 255)
 }
 
 struct SetupView: View {
@@ -503,10 +505,10 @@ struct SetupView: View {
             VStack(alignment: .leading, spacing: 20) {
                 HStack {
                     Text("\(model.page == .nearby ? "NEARBY COMPUTERS" : model.page == .arrangement ? "ARRANGE SCREENS" : "PERMISSIONS")")
-                        .font(.system(size: 10, weight: .bold)).tracking(1.2).foregroundStyle(.secondary)
+                        .font(.system(size: 10, weight: .bold)).tracking(1.2).foregroundStyle(SetupTheme.muted)
                     Spacer()
                     Label(model.status, systemImage: model.connected ? "lock.shield.fill" : "circle")
-                        .font(.system(size: 11)).foregroundStyle(model.connected ? .green : .secondary).lineLimit(2)
+                        .font(.system(size: 11)).foregroundStyle(model.connected ? SetupTheme.success : SetupTheme.muted).lineLimit(2)
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
@@ -531,7 +533,7 @@ struct SetupView: View {
                         .font(.system(size: 10, design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
             }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
-        }.frame(minWidth: 800, minHeight: 580).background(SetupTheme.background).foregroundStyle(SetupTheme.ink).tint(SetupTheme.accent).preferredColorScheme(.light)
+        }.frame(minWidth: 800, minHeight: 580).background(SetupTheme.background).foregroundStyle(SetupTheme.ink).tint(SetupTheme.accent).environment(\.colorScheme, .light).preferredColorScheme(.light)
             .sheet(isPresented: $model.showFiles, onDismiss: { model.retry() }) {
                 VStack(spacing: 0) {
                     FilesShelfView(model: model.files)
@@ -548,7 +550,7 @@ struct SetupView: View {
     private func heading(_ title: String, _ explanation: String) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             Text(title).font(.system(size: 26, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
-            Text(explanation).font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(explanation).font(.system(size: 13)).foregroundStyle(SetupTheme.muted).fixedSize(horizontal: false, vertical: true)
         }
     }
     @ViewBuilder private var nearbyPage: some View {
@@ -570,7 +572,7 @@ struct SetupView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Label("Looking for your other computer…", systemImage: "wifi")
                     Text("Keep both computers on the same Wi-Fi or wired network, with BatCave open. Guest Wi-Fi may block nearby computers.")
-                        .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .font(.system(size: 12)).foregroundStyle(SetupTheme.muted).fixedSize(horizontal: false, vertical: true)
                 }.padding(18).frame(maxWidth: .infinity, alignment: .leading).background(SetupTheme.background).cornerRadius(10)
             } else {
                 ForEach(Array(model.nearby.enumerated()), id: \.offset) { _, computer in
@@ -580,7 +582,7 @@ struct SetupView: View {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(computer.displayName).font(.system(size: 14, weight: .semibold)).lineLimit(2)
                                 Text("\(computer.platform == "macos" ? "Mac" : computer.platform == "linux" ? "Linux" : "Windows") · \(computer.pairing ? "Ready to link" : "Open Nearby computers there")")
-                                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                                    .font(.system(size: 11)).foregroundStyle(SetupTheme.muted)
                             }
                             Spacer()
                             if sameDeviceID(model.selectedNearbyId, computer.deviceID) { Image(systemName: "checkmark.circle.fill").foregroundStyle(SetupTheme.accent) }
@@ -589,8 +591,8 @@ struct SetupView: View {
                     }.buttonStyle(.plain).accessibilityLabel("\(computer.displayName), \(computer.platform)")
                 }
             }
-            if let error = model.discoveryError { Text(error).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
-            if !model.pairingOpen { Text("Nearby linking is paused. Choose Search again when both computers are ready.").font(.system(size: 12)).foregroundStyle(.secondary) }
+            if let error = model.discoveryError { Text(error).font(.system(size: 12)).foregroundStyle(SetupTheme.muted).fixedSize(horizontal: false, vertical: true) }
+            if !model.pairingOpen { Text("Nearby linking is paused. Choose Search again when both computers are ready.").font(.system(size: 12)).foregroundStyle(SetupTheme.muted) }
             HStack {
                 Button("Search again") { model.retry() }.disabled(model.pairingBusy)
                 Spacer()
@@ -611,7 +613,7 @@ struct SetupView: View {
                 Text("The other computer").tag(LanInputRole.receiver)
             }.pickerStyle(.segmented)
             Text(model.sharing ? "Sharing is on. Move across the shared screen edge." : "Sharing is paused. Reconnecting keeps input off until you choose Start sharing.")
-                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 12)).foregroundStyle(SetupTheme.muted).fixedSize(horizontal: false, vertical: true)
             if !model.connected { Button("Link again") { model.linkAgain() } }
             if !model.permissionsReady { Button("Allow Mac input permissions") { model.navigate(.permissions) } }
             HStack {
@@ -623,8 +625,8 @@ struct SetupView: View {
                 Button("Add another computer") { model.addComputer() }
                 Button("Unlink this computer", role: .destructive) { model.unpair() }
             }
-            Toggle("Share text clipboard while receiving input", isOn: Binding(get: { model.clipboard }, set: { model.changeClipboard($0) })).disabled(model.role == .source)
-            Toggle("Open BatCave at login", isOn: Binding(get: { model.loginEnabled }, set: { model.login($0) }))
+            Toggle("Share text clipboard while receiving input", isOn: Binding(get: { model.clipboard }, set: { model.changeClipboard($0) })).toggleStyle(.checkbox).disabled(model.role == .source)
+            Toggle("Open BatCave at login", isOn: Binding(get: { model.loginEnabled }, set: { model.login($0) })).toggleStyle(.checkbox)
         }
     }
     private var arrangement: some View {
@@ -637,7 +639,7 @@ struct SetupView: View {
                     Text("Right of the other computer").tag(true)
                 }.pickerStyle(.segmented)
                 Text("Changing the arrangement pauses sharing. Resume it on the computer providing the keyboard and mouse.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 12)).foregroundStyle(SetupTheme.muted).fixedSize(horizontal: false, vertical: true)
                 Button("Back to computer") { model.navigate(.nearby) }
             } else { Text("Link a computer first. BatCave will choose a usable arrangement for you.").font(.system(size: 13)) }
         }
@@ -649,14 +651,14 @@ struct SetupView: View {
             permissionRow("Input Monitoring", "Lets BatCave detect the shared edge and safely release held input.", ready: model.inputMonitoring, input: true)
             Button("Check permissions again") { model.refresh() }
             Text("If macOS asks you to quit, reopen BatCave after allowing access. Your linked computers are remembered; sharing stays paused.")
-                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 12)).foregroundStyle(SetupTheme.muted).fixedSize(horizontal: false, vertical: true)
             Button("Back to computers") { model.navigate(.nearby) }
         }
     }
     private func permissionRow(_ name: String, _ description: String, ready: Bool, input: Bool) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: ready ? "checkmark.circle.fill" : "lock.circle").font(.system(size: 23)).foregroundStyle(ready ? .green : .secondary)
-            VStack(alignment: .leading, spacing: 5) { Text(name).fontWeight(.semibold); Text(description).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+            Image(systemName: ready ? "checkmark.circle.fill" : "lock.circle").font(.system(size: 23)).foregroundStyle(ready ? SetupTheme.success : SetupTheme.muted)
+            VStack(alignment: .leading, spacing: 5) { Text(name).fontWeight(.semibold); Text(description).font(.system(size: 12)).foregroundStyle(SetupTheme.muted).fixedSize(horizontal: false, vertical: true) }
             Spacer()
             Button(ready ? "Allowed" : "Open settings") { model.permission(input) }.disabled(ready)
         }.padding(16).background(SetupTheme.background).cornerRadius(10)
@@ -679,13 +681,22 @@ private struct ScreenArrangement: View {
             VStack(spacing: 8) {
                 Image(systemName: "display").font(.system(size: 25))
                 Text(title).font(.system(size: 12, weight: .medium)).lineLimit(2)
-                Text(source ? "Mouse + keyboard" : "Shared screen").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(source ? "Mouse + keyboard" : "Shared screen").font(.system(size: 10)).foregroundStyle(SetupTheme.muted)
             }.frame(maxWidth: .infinity).frame(height: 110).background(.white).cornerRadius(8)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(source ? SetupTheme.accent : Color.secondary.opacity(0.25), lineWidth: 2))
-            Rectangle().fill(Color.secondary.opacity(0.3)).frame(width: 4, height: 9)
-            Capsule().fill(Color.secondary.opacity(0.3)).frame(width: 38, height: 3)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(source ? SetupTheme.accent : SetupTheme.muted.opacity(0.35), lineWidth: 2))
+            Rectangle().fill(SetupTheme.muted.opacity(0.4)).frame(width: 4, height: 9)
+            Capsule().fill(SetupTheme.muted.opacity(0.4)).frame(width: 38, height: 3)
         }
     }
+}
+
+// Native controls and SwiftUI share the fixed light palette, including when
+// rendered offscreen without a window inheriting the desktop appearance.
+@MainActor
+func makeSetupHostingView(model: SetupModel) -> NSHostingView<SetupView> {
+    let view = NSHostingView(rootView: SetupView(model: model))
+    view.appearance = NSAppearance(named: .aqua)
+    return view
 }
 
 @MainActor
@@ -705,7 +716,8 @@ private final class SetupApplication: NSObject, NSApplicationDelegate, NSWindowD
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 670), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "BatCave"
         window.minSize = NSSize(width: 800, height: 580)
-        window.contentView = NSHostingView(rootView: SetupView(model: model))
+        window.appearance = NSAppearance(named: .aqua)
+        window.contentView = makeSetupHostingView(model: model)
         window.delegate = self
         window.isReleasedWhenClosed = false; window.center(); window.makeKeyAndOrderFront(nil)
         self.window = window
