@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PREVIEW_VERSION="${BATCAVE_PREVIEW_VERSION:-0.2.0}"
+PREVIEW_VERSION="${BATCAVE_PREVIEW_VERSION:-0.3.0}"
 PREVIEW_ARCH="$(uname -m)"
 APP_DIR="$ROOT_DIR/Build/SetupPreview/BatCave.app"
 PACKAGE_DIR="${BATCAVE_PREVIEW_OUTPUT:-$ROOT_DIR/Build/SetupPreview/Packages}"
@@ -53,8 +53,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <key>CFBundleName</key><string>BatCave</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>BatCave</string>
-<key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>2006</string>
+<key>CFBundleShortVersionString</key><string>0.3.0</string>
+<key>CFBundleVersion</key><string>3000</string>
 <key>BatCavePreviewVersion</key><string>$PREVIEW_VERSION</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
@@ -73,10 +73,11 @@ cat > "$STAGING_DIR/Start here.txt" <<'TXT'
 BatCave
 
 Drag the versioned BatCave app to Applications and open it on both computers.
-Its filename keeps an existing BatCave.app available. Follow the guided
-Permissions, Pair computers, Arrange screens and Link devices screens.
-Approve each other's public device cards, then enable Mac input and choose
-Start sharing on Windows. Quit another BatCave app before enabling input here.
+Its filename keeps an existing BatCave.app available. Open Nearby computers on
+both devices, choose the other computer, compare all eight digits and choose
+Codes match · Link and share on both screens. Required Mac input permissions are
+explained when needed. Arrange screens is optional. Quit another BatCave copy
+before starting input here. After reconnect, choose Start sharing again.
 
 This build is ad-hoc signed and is not notarized. If macOS blocks it, use the
 specific app's Open Anyway control in System Settings > Privacy & Security.
@@ -86,14 +87,15 @@ macOS 13 or newer is required.
 Existing settings and other installed apps remain separate. Clipboard sharing
 and Open at login are optional. The local Files shelf does not send files between
 computers. Live secure Windows/Mac input, fresh-install permissions and recovery
-checks remain pending; a completed cross-platform release is not yet verified.
+checks remain pending. This nearby-pairing candidate requires cross-platform
+review and physical-device verification before release.
 TXT
 DMG="$PACKAGE_DIR/BatCave-$PREVIEW_VERSION-$PREVIEW_ARCH.dmg"
 hdiutil create -volname 'BatCave' -srcfolder "$STAGING_DIR" -ov -format UDZO "$DMG"
 (cd "$PACKAGE_DIR" && shasum -a 256 "$(basename "$DMG")") > "$DMG.sha256"
 DIRTY="$(git status --porcelain --untracked-files=normal | wc -l | tr -d ' ')"
 cat > "$PACKAGE_DIR/BatCave-build.json" <<JSON
-{"version":"$PREVIEW_VERSION","architecture":"$PREVIEW_ARCH","minimumMacOS":"13.0","sourceCommit":"$SOURCE_COMMIT","sourceTreeDirty":$DIRTY,"signing":"ad-hoc","notarized":false,"transport":"mutual TLS 1.3","port":47871,"fileTransfer":"local staging only; shared wire integration pending"}
+{"version":"$PREVIEW_VERSION","architecture":"$PREVIEW_ARCH","minimumMacOS":"13.0","sourceCommit":"$SOURCE_COMMIT","sourceTreeDirty":$DIRTY,"signing":"ad-hoc","notarized":false,"transport":"mutual TLS 1.3","port":47871,"pairingPort":47873,"discoveryPort":47872,"setup":"nearby comparison with explicit one-use sharing consent","fileTransfer":"local staging only; shared wire integration pending"}
 JSON
 echo "App: $APP_DIR"
 echo "Installer: $DMG"

@@ -269,7 +269,8 @@ final class BatCaveMacOSAgent: @unchecked Sendable {
     private let hud: InstructionHUD
     private let lan: LanBridgePeer
     private let eventPoster: (CGEvent) -> Void
-    private let bounds = currentDisplayBounds()
+    private var bounds = currentDisplayBounds()
+    private let inputSource: MacInputSource
     private var mode: BridgeMode = .off
     private var runToken: UInt64 = 0
     private var virtualCursor = currentPointerLocation()
@@ -293,11 +294,34 @@ final class BatCaveMacOSAgent: @unchecked Sendable {
         self.lan = lan
         self.hud = InstructionHUD(enabled: showHUD)
         self.eventPoster = eventPoster
+        self.inputSource = MacInputSource(send: { [weak lan] type, payload, session, activation in
+            lan?.publishSource(type, payload: payload, session: session, activation: activation)
+        }, post: eventPoster)
         lan.remoteInputReceiver = self
         lan.updateLocalBounds(bounds)
     }
 
+    @discardableResult
+    func startSourceSharing(session: LanAuthenticatedSession, peerOnRight: Bool = true) -> Bool {
+        guard eventTap != nil, session.role == .source else { return false }
+        return lan.withSourceActivation(session: session) { activation in
+            lock.withLock {
+                stopRemoteControlLocked(reason: "Using this Mac's keyboard and mouse", notify: false)
+                mode = .off
+                inputSource.localDeviceId = lan.localDeviceId
+                inputSource.start(session: session, activation: activation, peerOnRight: peerOnRight,
+                    localBounds: bounds, pointer: currentPointerLocation(), initialFlags: CGEventSource.flagsState(.combinedSessionState))
+            }
+        }
+    }
+
+    var isSourceSharingActive: Bool { inputSource.isActive }
+    var localDisplayBounds: DisplayBounds { lock.withLock { bounds } }
+
     func install(exitOnFailure: Bool = true) -> Bool {
+        if eventTap != nil { return true }
+        bounds = currentDisplayBounds()
+        lan.updateLocalBounds(bounds)
         let eventTypes: [CGEventType] = [
             .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
             .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
@@ -478,6 +502,7 @@ final class BatCaveMacOSAgent: @unchecked Sendable {
     }
 
     func stop(reason: String) {
+        inputSource.pause(sendStop: false)
         lock.lock()
         runToken += 1
         remoteControlSafetyTimeoutSeconds = nil
@@ -620,6 +645,13 @@ final class BatCaveMacOSAgent: @unchecked Sendable {
             lock.unlock()
             return Unmanaged.passUnretained(event)
         }
+
+        if inputSource.isActive, type == .keyDown,
+           event.getIntegerValueField(.keyboardEventKeycode) == f12KeyCode {
+            stop(reason: "safety key")
+            return nil
+        }
+        if inputSource.handle(type: type, event: event) { return nil }
 
         if remoteActive, isKeyboardEvent(type), isStopKey(event: event, type: type) {
             stop(reason: "safety key")
@@ -953,16 +985,23 @@ extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
     func lanPeer(_ peer: LanBridgePeer, didReceiveTestStop message: RemoteTestStopMessage, sourceDeviceId: String) {
         lock.lock()
         defer { lock.unlock() }
-        guard remoteControlSourceDeviceId == nil || remoteControlSourceDeviceId == sourceDeviceId else { return }
+        guard remoteControlSourceDeviceId == nil || remoteControlSourceDeviceId.map({ lanExactIdentity($0, sourceDeviceId) }) == true else { return }
+        inputSource.pause(sendStop: false)
         remoteControlSafetyTimeoutSeconds = nil
         stopRemoteControlLocked(reason: "remote stop from \(sourceDeviceId): \(message.reason)")
     }
 
     func lanPeer(_ peer: LanBridgePeer, didReceiveCursorHandoff message: CursorHandoffMessage, sourceDeviceId: String) {
+        if inputSource.isActive {
+            guard lanExactIdentity(message.targetDeviceId, lan.localDeviceId) else { return }
+            inputSource.receivedHandoff(message)
+            return
+        }
+        guard peer.secureIdentity == nil || (peer.inputRole == .receiver && peer.isSecureInputEnabled) else { return }
         lock.lock()
         defer { lock.unlock() }
-        guard message.targetDeviceId.caseInsensitiveCompare(lan.localDeviceId) == .orderedSame else {
-            if remoteControlSourceDeviceId == sourceDeviceId {
+        guard lanExactIdentity(message.targetDeviceId, lan.localDeviceId) else {
+            if remoteControlSourceDeviceId.map({ lanExactIdentity($0, sourceDeviceId) }) == true {
                 stopRemoteControlLocked(reason: "cursor handoff to \(message.targetDeviceId)", notify: false)
             }
             emit("REMOTE HANDOFF ignored: targetDeviceId=\(message.targetDeviceId) localDeviceId=\(lan.localDeviceId)")
@@ -1010,7 +1049,7 @@ extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
     func lanPeer(_ peer: LanBridgePeer, didReceiveMouseDelta message: MouseDeltaMessage, sourceDeviceId: String) {
         lock.lock()
         defer { lock.unlock() }
-        guard remoteControlActive, remoteControlSourceDeviceId == sourceDeviceId else { return }
+        guard remoteControlActive, remoteControlSourceDeviceId.map({ lanExactIdentity($0, sourceDeviceId) }) == true else { return }
 
         mouseEvents += 1
         let desired = CGPoint(
@@ -1037,7 +1076,7 @@ extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
     func lanPeer(_ peer: LanBridgePeer, didReceiveMouseButton message: MouseButtonMessage, sourceDeviceId: String) {
         lock.lock()
         defer { lock.unlock() }
-        guard remoteControlActive, remoteControlSourceDeviceId == sourceDeviceId else { return }
+        guard remoteControlActive, remoteControlSourceDeviceId.map({ lanExactIdentity($0, sourceDeviceId) }) == true else { return }
 
         let button = remoteMouseButton(message.button)
         if message.isDown {
@@ -1054,7 +1093,7 @@ extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
     func lanPeer(_ peer: LanBridgePeer, didReceiveMouseWheel message: MouseWheelMessage, sourceDeviceId: String) {
         lock.lock()
         defer { lock.unlock() }
-        guard remoteControlActive, remoteControlSourceDeviceId == sourceDeviceId else { return }
+        guard remoteControlActive, remoteControlSourceDeviceId.map({ lanExactIdentity($0, sourceDeviceId) }) == true else { return }
 
         postRemoteScroll(verticalDelta: message.verticalDelta, horizontalDelta: message.horizontalDelta, source: makeEventSource(), post: eventPoster)
     }
@@ -1062,7 +1101,7 @@ extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
     func lanPeer(_ peer: LanBridgePeer, didReceiveKeyInput message: KeyInputMessage, sourceDeviceId: String) {
         lock.lock()
         defer { lock.unlock() }
-        guard remoteControlActive, remoteControlSourceDeviceId == sourceDeviceId else { return }
+        guard remoteControlActive, remoteControlSourceDeviceId.map({ lanExactIdentity($0, sourceDeviceId) }) == true else { return }
 
         keyEvents += 1
         let count = keyEvents
@@ -1088,7 +1127,7 @@ extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
     func lanPeer(_ peer: LanBridgePeer, didReceiveShortcutInput message: ShortcutInputMessage, sourceDeviceId: String) {
         lock.lock()
         defer { lock.unlock() }
-        guard remoteControlActive, remoteControlSourceDeviceId == sourceDeviceId else { return }
+        guard remoteControlActive, remoteControlSourceDeviceId.map({ lanExactIdentity($0, sourceDeviceId) }) == true else { return }
 
         keyEvents += 1
         let count = keyEvents
@@ -1494,7 +1533,7 @@ private func macKeyCode(forWindowsVirtualKey virtualKey: Int) -> CGKeyCode? {
     case 0x28:
         return 125 // Down arrow
     default:
-        return nil
+        return (CGKeyCode(0)...CGKeyCode(126)).first { MacInputSource.windowsVirtualKey($0) == virtualKey }
     }
 }
 

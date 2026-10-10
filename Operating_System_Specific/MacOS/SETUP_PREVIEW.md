@@ -5,7 +5,7 @@ It does not replace the stable or development app, read their connection
 settings, or approve their hostname-based identities.
 
 Build `Scripts/build_setup_preview.sh`. The resulting DMG contains a versioned
-**BatCave-0.2.0.app**,
+**BatCave-0.3.0.app**,
 an Applications shortcut, and first-run instructions. Drag the
 app into Applications and open it. The build script also produces a checksum
 and source/version manifest. Developer ID signing and notarization are release
@@ -13,34 +13,48 @@ checks; do not claim release verification before those checks pass.
 `BATCAVE_PREVIEW_OUTPUT` may select a canonical directory inside this checkout's
 `Build` directory; paths outside it and symbolic-link destinations are refused.
 
-The guided setup has four pages:
+The app opens to **Nearby computers**, without a required permission wizard,
+platform picker, connection file or address field. Open BatCave on both computers,
+choose the other computer, compare all eight digits and choose **Codes match ·
+Link and share** on both. The initiating computer supplies its keyboard and mouse;
+the receiving computer starts on its right. Windows, Mac and Linux use the exact
+same bootstrap contract and shared cryptographic vectors.
 
-1. **Permissions:** open Accessibility and Input Monitoring settings, show
-   their actual status, and continue only after both are granted.
-2. **Pair computers:** export/copy this Mac's public JSON card, import/paste
-   the Windows card, and explicitly approve its full fingerprint. Import the
-   Mac card in BatCave on Windows as well.
-3. **Arrange screens:** select whether the Mac sits left or right of Windows,
-   match that setting on Windows, enter its local address, and connect securely.
-   The diagram represents each computer's aggregate desktop. Individual
-   monitor placement is a future refinement, not implemented by this picker.
-4. **Link devices:** quit other BatCave controllers before enabling Mac input;
-   choose Start sharing on Windows. Pause Mac input stops the connection and
-   restores local control. Save setup keeps the paired-device preferences.
-   Clipboard sharing and Open at login are optional on this page.
+**Arrange screens** is optional. Its diagram represents each computer's aggregate
+desktop; individual-monitor arrangement is a future refinement. **Permissions**
+explains Accessibility and Input Monitoring when input access is needed. A linked
+computer can use either input role. Changing roles/arrangement pauses sharing;
+Start sharing explicitly resumes a connected, approved session.
 
-Normal return handoffs do not show a HUD. Text clipboard sharing and Open at
-login are opt-in. Closing the setup window leaves a menu-bar app; Quit closes
-the transport and releases input. Pause closes the connection so Windows can
-restore local control. A lost connection releases input; reconnect remains
-idle until Mac input is explicitly enabled and Windows starts a fresh handoff.
+Initial Link and share consent is bound to the approved identity, pin and role,
+held only in memory for 30 seconds and consumed before the first matching fresh
+input session activates. Missing permissions consume it as well: grant permission,
+then use Start sharing. Cancel, navigation, role change, Pause, lock, sleep,
+disconnect, replacement and quitting revoke pending consent. Reconnect always
+stays paused. Existing Keychain keys and the SecurePreview profile are preserved.
+
+Nearby uses IPv4 multicast, with a clear same-network/retry state when discovery
+is blocked. The bootstrap listener is available only while Nearby computers is
+foreground, for 180 seconds per local opening or Search again. Closing or leaving
+that screen actually unbinds it. Normal return handoffs stay quiet. Closing the
+window leaves a menu-bar app; Quit releases input and closes transports. Clipboard
+sharing and Open at login remain opt-in. No installed app is changed during review.
 
 ## Security and interoperability
 
 - TLS 1.3 only, mutually authenticated with pinned certificates, on port 47871.
   The app's default launch has no plaintext fallback.
-- Exact `batcave.pairing-card.v1` camelCase fields agreed with Windows. Cards
-  are at most 16 KiB UTF-8 and validate their DER SHA-256 and validity dates.
+- Exact `Nearby_Pairing.md` binary encodings and `batcave.pairing-card.v1`
+  fields: strict bounded JSON, duplicate/unknown-property refusal, SHA-256 DER,
+  validity dates and supported certificate key types. Bootstrap signatures use
+  separate proof and approval domains; discovery grants no trust.
+- UDP 239.255.47.87:47872, TTL 1, per-interface discovery; 64-entry cache with
+  12-second expiry. Separate public-metadata TCP pairing on 47873, bounded
+  handshake/approval deadlines and attempts. Input stays on pinned mutual TLS.
+- Mac secure transport can connect or listen. Duplicate authenticated links
+  prefer the lower ordinal ID's outgoing socket. Source event tap sends the
+  existing Windows-format v0 input payloads; receiver requires handoff ownership.
+  Activation epochs reject work queued before Pause or socket replacement.
 - Random device identity persists in a separate public reference file; the
   non-extractable P-256 private signing key stays in the Mac Keychain. A missing
   key does not silently replace identity. The ad-hoc signed app uses
@@ -63,9 +77,10 @@ idle until Mac input is explicitly enabled and Windows starts a fresh handoff.
 Automated checks cover native input cleanup, identity persistence and missing
 keys, certificate signing/expiry/tampering, TLS pin rejection, and real local
 mutual TLS with hello/ownership gating. They install no desktop event tap.
-Actual Windows `SslStream` interoperability, first install on another Mac,
-held-drag/modifier crossings, and sleep/wake still require live validation.
-Bonjour discovery and QR pairing are not implemented.
+Native Mac/Mac socket and recording-sink fixtures establish local behavior only.
+Actual Windows/Linux interoperability, multicast across physical computers,
+first install on another Mac, held-drag/modifier crossings and sleep/wake still
+require live validation. The source does not claim those checks have passed.
 
 For live validation, cross in both directions, type and try Shift+Arrow in a
 regular document, hold a modifier/drag across the boundary, then repeat after

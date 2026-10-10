@@ -55,7 +55,7 @@ final class SecureSetupTests: XCTestCase, @unchecked Sendable {
         let authenticated = expectation(description: "Hello authenticated")
         server.onReady = { connection in
             connection.send(content: self.frame("device.hello", source: serverIdentity.identity.card.deviceId,
-                payload: ["deviceId": serverIdentity.identity.card.deviceId]), completion: .idempotent)
+                payload: ["deviceId": serverIdentity.identity.card.deviceId, "virtualDesktopBounds": ["left": 0,"top": 0,"width": 800,"height": 600,"right": 799,"bottom": 599]]), completion: .idempotent)
         }
         // No native input is installed or posted in this test.
         server.queue.asyncAfter(deadline: .now() + 1) {
@@ -79,6 +79,54 @@ final class SecureSetupTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(server.mutualTLSVerified)
         client.connect(host: "127.0.0.1", port: try XCTUnwrap(server.listener.port).rawValue)
         XCTAssertFalse(client.isSecureInputEnabled, "Replacing a connection must also reset the UI's input-enabled state")
+    }
+
+    func testPartialInputFromBeforePauseCannotReplayAfterResume() throws {
+        let a = try IdentityFixture(), b = try IdentityFixture()
+        defer { a.cleanup(); b.cleanup() }
+        let received = expectation(description:"Only fresh input received")
+        let recorder = SecureRecorder(input:received), client = LanBridgePeer(secureIdentity:a.identity)
+        client.remoteInputReceiver = recorder
+        client.updateLocalBounds(DisplayBounds(minX:0,maxX:800,minY:0,maxY:600))
+        let server = try TLSServer(identity:b.identity,approved:a.identity.card)
+        defer { client.dispose(); server.close() }
+        let ready = expectation(description:"TLS listener ready"), authenticated = expectation(description:"Authenticated")
+        server.listener.stateUpdateHandler = { if case .ready = $0 { ready.fulfill() } }
+        let source = b.identity.card.deviceId
+        server.onReady = { connection in
+            connection.send(content:self.frame("device.hello",source:source,payload:["deviceId":source,
+                "virtualDesktopBounds":["left":0,"top":0,"width":800,"height":600,"right":800,"bottom":600]]),completion:.idempotent)
+        }
+        client.onAuthenticated = { _ in authenticated.fulfill() }
+        server.listener.start(queue:server.queue); wait(for:[ready],timeout:5)
+        client.approve(b.identity.card); client.connect(host:"127.0.0.1",port:try XCTUnwrap(server.listener.port).rawValue)
+        wait(for:[authenticated],timeout:5)
+        client.enableSecureInput(true)
+        XCTAssertTrue(client.isSecureInputEnabled)
+        let stale = frame("input.key",source:source,payload:["virtualKey":0x25,"scanCode":0,"isKeyUp":false,"isExtended":true])
+        server.send(Data(stale.dropLast()))
+        let buffered = expectation(description:"Partial input buffered")
+        server.queue.asyncAfter(deadline:.now()+0.1) {
+            if client.pendingReceiveBytes == stale.count - 1 { buffered.fulfill() }
+        }
+        wait(for:[buffered],timeout:5)
+        let old = try XCTUnwrap(client.authenticatedSession)
+        client.pauseSharing(reason:"Fixture Pause")
+        XCTAssertFalse(client.isSecureInputEnabled)
+        let fresh = try XCTUnwrap(client.authenticatedSession)
+        XCTAssertNotEqual(old.activationGeneration,fresh.activationGeneration)
+        client.enableSecureInput(true,forSession:fresh.sessionId,forActivation:fresh.activationGeneration)
+        XCTAssertTrue(client.isSecureInputEnabled)
+        server.send(Data([10]))
+        let drained = expectation(description:"Stale partial input drained")
+        server.queue.asyncAfter(deadline:.now()+0.1) { if client.pendingReceiveBytes == 0 { drained.fulfill() } }
+        wait(for:[drained],timeout:5)
+        XCTAssertEqual(recorder.count,0)
+        server.send(frame("cursor.handoff",source:source,payload:["targetDeviceId":client.localDeviceId,
+            "targetDisplayId":client.localDeviceId + ":desktop","targetEdge":"left","targetPosition":0.5,"targetX":0,"targetY":300]))
+        server.send(stale)
+        wait(for:[received],timeout:5)
+        XCTAssertEqual(recorder.count,1)
     }
 
     func testWrongServerPinRejectsTLS() throws {

@@ -1,7 +1,14 @@
 # BatCave on macOS
 
-The guided app uses Permissions, Pair computers, Arrange screens and Link devices.
-It connects to explicitly approved Windows devices using pinned mutual TLS 1.3.
+The updated Mac source opens to Nearby computers. Open BatCave on both devices,
+choose the other computer, compare all eight digits and choose **Codes match ·
+Link and share** on both screens. Windows, Mac and Linux use the same pairing
+contract. Permissions and Arrange screens are available when needed.
+
+This 0.3.0 implementation is a separate review candidate; published 0.2.0 Mac
+installers still use manual pairing. Working installations are not replaced by
+source development. Physical LAN discovery, permission and input checks remain
+release gates.
 
 Build from a clean checkout on macOS 13+ with Swift 6 and a macOS SDK:
 
@@ -11,7 +18,7 @@ bash Operating_System_Specific/MacOS/Scripts/install_setup_preview.sh
 ```
 
 The installer creates a versioned app in your user Applications folder and the
-BatCave — Latest desktop shortcut. Open the app and follow the guided setup.
+BatCave — Latest desktop shortcut. Open the app and choose a nearby computer.
 Older apps and device identities remain available. Build script and profile
 identifiers retain their existing names for compatibility.
 
@@ -22,7 +29,10 @@ Actual secure Windows/Mac input, first-install permissions and recovery still
 need live verification before a completed cross-platform release can be claimed.
 
 Accessibility and Input Monitoring grants are required for input. Pairing exchanges
-public cards; private keys remain in Keychain. Reconnection leaves input paused.
+fresh nonce commitments and signed public identities; private keys remain in
+Keychain. Both computers must locally approve the matching code. Approval grants
+only the first authenticated input session, for at most 30 seconds, in memory.
+Reconnection leaves input paused.
 Clipboard sharing and opening at login are optional. The Files shelf keeps source
 icons locally; network file transfer and audio are disabled in this build.
 

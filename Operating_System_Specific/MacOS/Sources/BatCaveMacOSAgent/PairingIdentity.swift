@@ -17,19 +17,10 @@ struct PairingCard: Codable, Equatable, Sendable {
         guard data.count <= 16 * 1024, String(data: data, encoding: .utf8) != nil else {
             throw PairingError("The pairing card must be UTF-8 text smaller than 16 KB.")
         }
-        let card = try JSONDecoder().decode(Self.self, from: data)
-        func validLabel(_ text: String) -> Bool {
-            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.count <= 128
-                && !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
-        }
-        guard card.schema == "batcave.pairing-card.v1", validLabel(card.deviceId), validLabel(card.displayName),
-              card.certificateSha256.count == 64,
-              let der = Data(base64Encoded: card.certificateDerBase64),
-              let certificate = SecCertificateCreateWithData(nil, der as CFData),
-              fingerprint(der).caseInsensitiveCompare(card.certificateSha256) == .orderedSame,
-              certificateIsCurrent(certificate, now: now) else {
-            throw PairingError("This card is invalid, expired, or has a different fingerprint.")
-        }
+        // File imports retain ordinary JSON CRLF whitespace compatibility;
+        // the nearby newline-framed transport rejects CR separately.
+        let card = try NearbyPairingProtocol.card(from: NearbyPairingProtocol.parseObject(data, allowCarriageReturn: true))
+        _ = try NearbyPairingProtocol.validatedCertificate(card, now: now, exactFingerprint: false)
         return card
     }
 
@@ -72,6 +63,14 @@ final class PairingIdentity: @unchecked Sendable {
 
     private init(card: PairingCard, identity: SecIdentity, keyTag: Data) {
         self.card = card; self.identity = identity; self.keyTag = keyTag
+    }
+
+    func sign(message: Data) throws -> Data {
+        var key: SecKey?
+        guard SecIdentityCopyPrivateKey(identity, &key) == errSecSuccess, let key else {
+            throw PairingError("This Mac's Keychain signing key is unavailable. Your identity was not replaced.")
+        }
+        return try NearbyPairingProtocol.sign(key: key, message: message)
     }
 
     static func openOrCreate(at directory: URL, displayName: String) throws -> PairingIdentity {
@@ -151,17 +150,21 @@ enum LocalCertificate {
     }
     static func create(key: SecKey, commonName: String, now: Date = Date()) throws -> Data {
         var error: Unmanaged<CFError>?
-        guard let publicKey = SecKeyCopyPublicKey(key),
+        guard let attributes = SecKeyCopyAttributes(key) as? [String: Any],
+              attributes[kSecAttrKeyType as String] as? String == kSecAttrKeyTypeECSECPrimeRandom as String,
+              let bits = attributes[kSecAttrKeySizeInBits as String] as? Int, bits == 256 || bits == 384,
+              let publicKey = SecKeyCopyPublicKey(key),
               let publicData = SecKeyCopyExternalRepresentation(publicKey, &error) as Data? else {
             throw PairingError("Could not read the public identity key.")
         }
+        let curve: [UInt8] = bits == 256 ? [0x2A,0x86,0x48,0xCE,0x3D,0x03,0x01,0x07] : [0x2B,0x81,0x04,0x00,0x22]
         let signatureAlgorithm = seq(oid([0x2A,0x86,0x48,0xCE,0x3D,0x04,0x03,0x02]))
         let name = seq(der(0x31, seq(oid([0x55,0x04,0x03]), der(0x0C, Data(commonName.utf8)))))
         var serial = [UInt8](repeating: 0, count: 16)
         guard SecRandomCopyBytes(kSecRandomDefault, serial.count, &serial) == errSecSuccess else { throw PairingError("Random identity generation failed.") }
         serial[0] &= 0x7f; serial[0] |= 1
         let publicInfo = seq(seq(oid([0x2A,0x86,0x48,0xCE,0x3D,0x02,0x01]),
-            oid([0x2A,0x86,0x48,0xCE,0x3D,0x03,0x01,0x07])), der(3, Data([0]) + publicData))
+            oid(curve)), der(3, Data([0]) + publicData))
         let basic = seq(oid([0x55,0x1D,0x13]), der(1, Data([0xFF])), der(4, seq()))
         let usage = seq(oid([0x55,0x1D,0x0F]), der(1, Data([0xFF])), der(4, der(3, Data([7,0x80]))))
         let extended = seq(oid([0x55,0x1D,0x25]), der(4, seq(
