@@ -42,7 +42,7 @@ internal sealed class MonitorLayoutCanvas : Control
             }
         if (Scene is not { } scene)
         {
-            TextRenderer.DrawText(g, "Choose an outside monitor edge to preview the layout.", Font, ClientRectangle,
+            TextRenderer.DrawText(g, "Choose an outside monitor edge to show the layout.", Font, ClientRectangle,
                 Color.FromArgb(82, 100, 126), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
             _peerRect = RectangleF.Empty;
             return;
