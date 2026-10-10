@@ -27,6 +27,13 @@ internal static partial class ModifierRegression
             Require(Get(window, "_initialSharingConsent") is null, "stale completion grants no sharing consent");
 
             Call(window, "ApplyApproval", first); window.ShowStep(1);
+            Require(((Button)Get(window, "_retryLink")).Visible, "an incomplete link offers an explicit fresh-code retry");
+            ((Button)Get(window, "_retryLink")).PerformClick(); Application.DoEvents();
+            Require((bool)Get(window, "_addingComputer") && ((Button)Get(window, "_back")).Visible
+                && ((Button)Get(window, "_back")).Text == "Cancel" && service.IsOpen, "retry returns to nearby selection with visible cancellation");
+            ((Button)Get(window, "_back")).PerformClick(); Application.DoEvents();
+            Require(!(bool)Get(window, "_addingComputer") && !service.IsOpen && approvals.Peers.Length == 1,
+                "cancelling before the code appears closes pairing and preserves the existing approval");
             var grant = new InitialSharingConsent(first.DeviceId, first.CertificateSha256, false, 0, DateTimeOffset.UtcNow.AddSeconds(30));
             Set(window, "_initialSharingConsent", grant); Call(window, "UpdateSetup");
             Require(((Button)Get(window, "_pause")).Visible && ((Button)Get(window, "_pause")).Enabled, "pending initial sharing can be paused before connecting");

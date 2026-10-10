@@ -10,6 +10,7 @@ internal sealed partial class DesktopWindow
     private readonly FlowLayoutPanel _nearbyPanel = new() { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
     private readonly Label _nearbyStatus = Body("Looking for computers…");
     private readonly DesktopButton _searchAgain = new() { Text = "Search again", Quiet = true };
+    private readonly DesktopButton _retryLink = new() { Text = "Link again", Quiet = true };
     private readonly FlowLayoutPanel _comparisonPanel = new() { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
     private readonly Label _comparisonCode = new() { AutoSize = true, Font = new Font("Consolas", 32, FontStyle.Bold), ForeColor = DesktopTheme.Accent, Margin = new Padding(0, 8, 0, 20) };
     private readonly Label _comparisonHelp = Body("Check that these eight digits match on your other computer. Then choose Codes match on both screens.");
@@ -39,6 +40,14 @@ internal sealed partial class DesktopWindow
         _rolePanel.Controls.Add(_role); page.Controls.Add(_rolePanel);
         _role.SelectedIndexChanged += (_, _) => Guard(() => { if (!_loadingConnection) { Pause("input role changed"); SaveSettings(); UpdateSetup(); } });
         _managePeers.Controls.Add(Button("Arrange screens", () => ShowStep(2)));
+        _retryLink.Click += (_, _) =>
+        {
+            var selected = _selectedPeerId;
+            _addingComputer = true; _nearbyError = null; OpenPairingWindow(); RefreshNearby();
+            _nearbyList.SelectedIndex = _nearbyList.Items.Cast<NearbyComputer>().ToList().FindIndex(p => p.DeviceId == selected);
+            UpdateSetup();
+        };
+        _managePeers.Controls.Add(_retryLink);
         _managePeers.Controls.Add(Button("Add another computer", () => { _addingComputer = true; OpenPairingWindow(); RefreshNearby(); UpdateSetup(); }));
         _removePeer.Click += (_, _) => Unpair(); _managePeers.Controls.Add(_removePeer); page.Controls.Add(_managePeers);
         page.Resize += (_, _) =>
@@ -186,12 +195,13 @@ internal sealed partial class DesktopWindow
             : browsing ? "Open BatCave on your other computer. Choose it below to link."
             : state.Connected ? ReceiveInput ? "Connected securely. Enable input here to use your other computer's keyboard and mouse."
                 : "Connected securely. Your other screen is on the right by default. You can change that in Arrange screens."
-            : "Looking for this computer. Keep BatCave open on both devices; we'll connect automatically.";
+            : "Looking for this computer. Keep BatCave open on both devices; we'll connect automatically. If linking did not finish, choose Link again to compare a fresh code.";
         _nearbyPanel.Visible = browsing && !comparing;
         _comparisonPanel.Visible = comparing;
         _pairedPanel.Visible = !browsing && !comparing && _peers.Items.Count > 1;
         _peers.Visible = _peers.Items.Count > 1;
         _rolePanel.Visible = _managePeers.Visible = !browsing && !comparing;
+        _retryLink.Visible = !state.Connected;
         _removePeer.Enabled = state.PeerSelected;
         _nearbyList.Visible = _nearbyList.Items.Count > 0;
         _nearbyStatus.Text = _nearbyError ?? _discovery?.Error ?? (_nearbyList.Items.Count == 0
