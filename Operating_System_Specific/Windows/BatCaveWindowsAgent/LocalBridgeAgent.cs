@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Windows.Forms;
 using BatCave.Universal.Topology;
 using static BatCave.WindowsAgent.Win32;
@@ -58,17 +59,17 @@ internal sealed class LocalBridgeAgent : Form
     private readonly HashSet<MouseButtonKind> _localMouseButtonsDown = new();
     private readonly HashSet<MouseButtonKind> _remoteMouseButtonsDown = new();
     private readonly LanBridgePeer _lan;
+    private readonly WindowsInputReceiver _receiver;
+    private readonly IWindowsInputSink _inputSink;
+    private readonly HashSet<ushort> _localTextKeys = [];
+    private readonly bool _inspectionOnly;
+    private long _inputGeneration;
+    private int _pendingRemoteActions, _pendingRemoteBytes;
 
     private IntPtr _mouseHook = IntPtr.Zero;
     private IntPtr _keyboardHook = IntPtr.Zero;
     private bool _clipboardListenerInstalled;
     private bool _applyingRemoteClipboard;
-    private bool _localCommandDownBuffered;
-    private bool _localCommandShortcutConsumed;
-    private ushort _localBufferedCommandVkey;
-    private ushort _localBufferedCommandScanCode;
-    private bool _localBufferedCommandIsExtended;
-    private readonly HashSet<ushort> _localSuppressedKeyUps = new();
     private readonly HeldKeyState _pendingRemoteModifiers = new();
     private readonly HashSet<ushort> _remoteSuppressedKeyUps = new();
     private TopologyMap? _topology;
@@ -96,16 +97,21 @@ internal sealed class LocalBridgeAgent : Form
 
     private readonly string? _topologyPath;
     public bool IsBridgeActive => _bridgeActive;
+    public bool IsReceivingEnabled => _receiver.Enabled;
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal bool ClipboardSharingEnabled { get; set; }
 
-    public LocalBridgeAgent(LanBridgePeer lan, string? topologyPath = null)
+    public LocalBridgeAgent(LanBridgePeer lan, string? topologyPath = null, bool inspectionOnly = false, IWindowsInputSink? inputSink = null)
     {
         _lan = lan;
+        _inspectionOnly = inspectionOnly;
+        _inputSink = inputSink ?? new NativeInputSink();
+        _receiver = new WindowsInputReceiver(lan.LocalDeviceId, _inputSink);
         ClipboardSharingEnabled = !lan.IsSecure;
         _topologyPath = topologyPath;
         _lan.ShortcutInputReceived += HandleRemoteShortcutInput;
         _lan.ClipboardTextReceived += HandleRemoteClipboardText;
+        _lan.InputMessageReceived += HandleRemoteInputMessage;
 
         Text = "BatCave Windows Agent";
         ShowInTaskbar = false;
@@ -148,18 +154,23 @@ internal sealed class LocalBridgeAgent : Form
     {
         if (!IsDisposed)
         {
+            var generation = Interlocked.Read(ref _inputGeneration);
+            var session = _lan.SessionGeneration;
             BeginInvoke((Action)(() =>
             {
-                if (_lan.HasPeer) { StartBridge(null, handoffTest: true); }
+                if (_lan.HasPeer && _lan.SessionGeneration == session && generation == Interlocked.Read(ref _inputGeneration))
+                { StartBridge(null, handoffTest: true); }
             }));
         }
     }
 
     public void PostStopBridge(string reason)
     {
-        if (!IsDisposed)
+        var generation = Interlocked.Increment(ref _inputGeneration);
+        if (!IsDisposed && IsHandleCreated)
         {
-            BeginInvoke((Action)(() => StopBridge(reason)));
+            try { BeginInvoke((Action)(() => { if (generation == Interlocked.Read(ref _inputGeneration)) StopSharingNow(reason); })); }
+            catch (InvalidOperationException) when (IsDisposed || !IsHandleCreated) { }
         }
     }
 
@@ -206,6 +217,7 @@ internal sealed class LocalBridgeAgent : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        if (_inspectionOnly) return;
         RegisterForRawInput();
         InstallHooks();
         InstallClipboardListener();
@@ -220,9 +232,10 @@ internal sealed class LocalBridgeAgent : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
-        StopBridge("process closing");
+        StopSharingNow("process closing");
         _lan.ShortcutInputReceived -= HandleRemoteShortcutInput;
         _lan.ClipboardTextReceived -= HandleRemoteClipboardText;
+        _lan.InputMessageReceived -= HandleRemoteInputMessage;
         UninstallClipboardListener();
         UninstallHooks();
         base.OnFormClosed(e);
@@ -232,7 +245,8 @@ internal sealed class LocalBridgeAgent : Form
     {
         if (m.Msg == WM_INPUT)
         {
-            HandleRawInput(m.LParam);
+            try { HandleRawInput(m.LParam); }
+            catch (InvalidOperationException) { PostStopBridge("Windows input unavailable"); }
         }
         else if (m.Msg == WM_CLIPBOARDUPDATE)
         {
@@ -277,7 +291,7 @@ internal sealed class LocalBridgeAgent : Form
     private void HandleClipboardUpdate()
     {
         if (_applyingRemoteClipboard || !ClipboardSharingEnabled
-            || (_lan.IsSecure && (!_bridgeActive || !_lan.HasPeer)))
+            || (_lan.IsSecure && ((!_bridgeActive && !_receiver.Enabled) || !_lan.HasPeer)))
         {
             return;
         }
@@ -318,18 +332,11 @@ internal sealed class LocalBridgeAgent : Form
             return;
         }
 
-        try
+        QueueRemoteAction(sourceDeviceId, _lan.SessionGeneration, Encoding.UTF8.GetByteCount(payload.Text), () =>
         {
-            var session = _lan.SessionGeneration;
-            BeginInvoke((Action)(() =>
-            {
-                if (ClipboardSharingEnabled && IsCurrentRemoteAction(sourceDeviceId, session))
-                    ApplyRemoteClipboardText(sourceDeviceId, payload);
-            }));
-        }
-        catch (InvalidOperationException)
-        {
-        }
+            if (ClipboardSharingEnabled && (!_lan.IsSecure || _bridgeActive || _receiver.Enabled))
+                ApplyRemoteClipboardText(sourceDeviceId, payload);
+        });
     }
 
     private void ApplyRemoteClipboardText(string sourceDeviceId, ClipboardTextPayload payload)
@@ -374,37 +381,87 @@ internal sealed class LocalBridgeAgent : Form
 
     private void HandleRemoteShortcutInput(string sourceDeviceId, ShortcutInputPayload payload)
     {
-        if (string.Equals(sourceDeviceId, _lan.LocalDeviceId, StringComparison.OrdinalIgnoreCase)
+        // Secure shortcuts use the receiver's local-enable/ownership gate below.
+        // The legacy shortcut-only route must not bypass the selected input role.
+        if (_lan.IsSecure || string.Equals(sourceDeviceId, _lan.LocalDeviceId, StringComparison.OrdinalIgnoreCase)
             || IsDisposed
             || !IsHandleCreated)
         {
             return;
         }
 
+        QueueRemoteAction(sourceDeviceId, _lan.SessionGeneration, 64, () =>
+        {
+            if (_activeTarget == ActiveTarget.Local)
+                ApplyRemoteShortcutInput(sourceDeviceId, payload);
+        });
+    }
+
+    private void HandleRemoteInputMessage(string source, long session, string type, JsonElement payload)
+    {
+        var copy = payload.Clone();
+        QueueRemoteAction(source, session, Encoding.UTF8.GetByteCount(copy.GetRawText()), () =>
+        {
+            if (type == "control.testStop") { StopSharingNow("paused on other computer"); return; }
+            _receiver.Handle(source, session, type, copy);
+        });
+    }
+
+    private void QueueRemoteAction(string source, long session, int bytes, Action action)
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        var generation = Interlocked.Read(ref _inputGeneration);
+        var count = Interlocked.Increment(ref _pendingRemoteActions);
+        var size = Interlocked.Add(ref _pendingRemoteBytes, bytes);
+        if (count > 512 || size > 1024 * 1024)
+        {
+            Interlocked.Decrement(ref _pendingRemoteActions); Interlocked.Add(ref _pendingRemoteBytes, -bytes);
+            PostStopBridge("incoming queue overflow"); _lan.Disconnect(); return;
+        }
         try
         {
-            var session = _lan.SessionGeneration;
             BeginInvoke((Action)(() =>
             {
-                if (IsCurrentRemoteAction(sourceDeviceId, session) && _activeTarget == ActiveTarget.Local)
-                    ApplyRemoteShortcutInput(sourceDeviceId, payload);
+                try
+                {
+                    if (!IsDisposed && generation == Interlocked.Read(ref _inputGeneration)
+                        && _lan.HasPeer && _lan.SessionGeneration == session && _lan.CurrentPeerDeviceId == source) action();
+                }
+                catch (Exception)
+                {
+                    // Never keep injecting after malformed input or an injection
+                    // failure. Do not log the remote payload or typed text.
+                    try { StopSharingNow("invalid remote input"); } finally { _lan.Disconnect(); }
+                }
+                finally { Interlocked.Decrement(ref _pendingRemoteActions); Interlocked.Add(ref _pendingRemoteBytes, -bytes); }
             }));
         }
         catch (InvalidOperationException)
-        {
-        }
+        { Interlocked.Decrement(ref _pendingRemoteActions); Interlocked.Add(ref _pendingRemoteBytes, -bytes); }
+    }
+
+    internal void EnableReceiving()
+    {
+        StopSharingNow("input role changed");
+        if (!_lan.HasPeer || _lan.CurrentPeerDeviceId is not { } peer || !_lan.IsSecure)
+            throw new InvalidOperationException("Connect to an approved computer first.");
+        _receiver.Enable(peer, _lan.SessionGeneration, GetVirtualDesktopBounds());
     }
 
     internal void StopSharingNow(string reason)
     {
         if (IsDisposed) { return; }
-        if (InvokeRequired) { Invoke((Action)(() => StopBridge(reason))); }
-        else { StopBridge(reason); }
+        if (InvokeRequired) { Invoke((Action)(() => StopSharingNow(reason))); return; }
+        Interlocked.Increment(ref _inputGeneration);
+        var receiving = _receiver.Enabled;
+        try { _receiver.Pause(); }
+        catch (InvalidOperationException) { Console.WriteLine("Windows could not release some remote input; sharing is paused."); }
+        finally
+        {
+            StopBridge(reason);
+            if (receiving) _lan.PublishControlTestStop("input paused");
+        }
     }
-
-    private bool IsCurrentRemoteAction(string sourceDeviceId, long session) =>
-        _lan.HasPeer && _lan.SessionGeneration == session && _lan.CurrentPeerDeviceId == sourceDeviceId
-        && (!_lan.IsSecure || _bridgeActive);
 
     private void ApplyRemoteShortcutInput(string sourceDeviceId, ShortcutInputPayload payload)
     {
@@ -439,6 +496,8 @@ internal sealed class LocalBridgeAgent : Form
 
     private void StartBridge(TimeSpan? duration, bool handoffTest)
     {
+        if (_receiver.Enabled) StopSharingNow("input role changed");
+        Interlocked.Increment(ref _inputGeneration);
         if (_bridgeActive)
         {
             Console.WriteLine("Bridge mode is already active.");
@@ -462,7 +521,7 @@ internal sealed class LocalBridgeAgent : Form
         _remoteTargetDeviceId = null;
         ClearMouseButtonTracking();
         SeedHeldInput();
-        ClearLocalCommandShortcutState();
+        _localTextKeys.Clear();
         ClearRemoteTracking();
         _handoffTestActive = handoffTest;
         _bridgeTimeoutEnabled = duration.HasValue;
@@ -516,11 +575,11 @@ internal sealed class LocalBridgeAgent : Form
             return;
         }
 
+        _bridgeActive = false;
         ReleaseLocalKeys();
         ReleaseRemoteKeys();
         _physicalKeys.ReleaseAll();
         ReleaseAllTrackedMouseButtons("bridge stop");
-        _bridgeActive = false;
         _bridgeTimer.Stop();
         _bridgeTimeoutEnabled = false;
         if (_handoffTestActive)
@@ -531,7 +590,7 @@ internal sealed class LocalBridgeAgent : Form
         _handoffTestActive = false;
         _activeTarget = ActiveTarget.Local;
         _remoteTargetDeviceId = null;
-        ClearLocalCommandShortcutState();
+        _localTextKeys.Clear();
         ClearRemoteTracking();
         Console.WriteLine();
         Console.WriteLine($"BRIDGE OFF ({reason}).");
@@ -571,6 +630,12 @@ internal sealed class LocalBridgeAgent : Form
 
     private IntPtr KeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
+        if (nCode >= 0 && _receiver.Enabled)
+        {
+            var incoming = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+            if ((incoming.flags & LLKHF_INJECTED) == 0 && incoming.vkCode is VK_ESCAPE or VK_F12 or VK_PAUSE)
+            { PostStopBridge("local emergency stop"); return new IntPtr(1); }
+        }
         if (nCode >= 0 && _bridgeActive)
         {
             var info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
@@ -579,19 +644,20 @@ internal sealed class LocalBridgeAgent : Form
             {
                 if (info.vkCode == VK_ESCAPE || info.vkCode == VK_F12 || info.vkCode == VK_PAUSE)
                 {
-                    BeginInvoke((Action)(() => StopBridge($"panic key vk=0x{info.vkCode:X2}")));
+                    PostStopBridge("local emergency stop");
                     return new IntPtr(1);
                 }
 
                 _physicalKeys.Update(new HeldKey((ushort)info.vkCode, (ushort)info.scanCode,
                     (info.flags & LLKHF_EXTENDED) != 0), (info.flags & LLKHF_UP) != 0);
-                if (_activeTarget == ActiveTarget.Remote)
+                try
                 {
-                    ForwardRemoteKeyboardHook(info);
+                    if (_activeTarget == ActiveTarget.Remote) ForwardRemoteKeyboardHook(info);
+                    else ReplayPhysicalKeyboardHook(info);
                 }
-                else
+                catch (InvalidOperationException)
                 {
-                    ReplayPhysicalKeyboardHook(info);
+                    PostStopBridge("Windows input unavailable");
                 }
 
                 return new IntPtr(1);
@@ -707,10 +773,6 @@ internal sealed class LocalBridgeAgent : Form
         var isKeyUp = (keyboard.Flags & RI_KEY_BREAK) != 0;
         UpdateKeyboardState(vkey, isKeyUp);
 
-        var action = isKeyUp ? "UP" : "DOWN";
-        Console.WriteLine(
-            $"{_clock.Elapsed:hh\\:mm\\:ss\\.fff} RAWKEY {action,-4} " +
-            $"vk=0x{vkey:X4} scan=0x{keyboard.MakeCode:X4} rawEvents={_rawKeyEventCount}");
     }
 
     private void ReplayPhysicalKeyboardHook(KBDLLHOOKSTRUCT info)
@@ -723,111 +785,8 @@ internal sealed class LocalBridgeAgent : Form
         var isExtended = (info.flags & LLKHF_EXTENDED) != 0;
 
         UpdateKeyboardState(vkey, isKeyUp);
-        if (TryHandleLocalCommandShortcutChord(vkey, scanCode, isKeyUp, isExtended))
-        {
-            return;
-        }
+        ReplayKeyboardHookEvent(vkey, scanCode, isKeyUp, isExtended);
 
-        var replay = ReplayKeyboardHookEvent(vkey, scanCode, isKeyUp, isExtended);
-
-        var action = isKeyUp ? "UP" : "DOWN";
-        Console.WriteLine(
-            $"{_clock.Elapsed:hh\\:mm\\:ss\\.fff} HOOKKEY {action,-4} " +
-            $"vk=0x{vkey:X4} scan=0x{scanCode:X4} replay={replay} hookEvents={_hookKeyEventCount}");
-    }
-
-    private bool TryHandleLocalCommandShortcutChord(ushort vkey, ushort scanCode, bool isKeyUp, bool isExtended)
-    {
-        if (IsCommandKey(vkey))
-        {
-            if (!isKeyUp)
-            {
-                BufferLocalCommandDown(vkey, scanCode, isExtended);
-                return true;
-            }
-
-            if (_localCommandDownBuffered && !_localCommandShortcutConsumed)
-            {
-                FlushLocalBufferedCommand();
-                return false;
-            }
-
-            if (_localCommandShortcutConsumed)
-            {
-                ClearLocalCommandModifierState();
-                Console.WriteLine(
-                    $"{_clock.Elapsed:hh\\:mm\\:ss\\.fff} LOCALMOD UP   " +
-                    $"vk=0x{vkey:X4} consumed=shortcut hookEvents={_hookKeyEventCount}");
-                return true;
-            }
-
-            return false;
-        }
-
-        if (isKeyUp && _localSuppressedKeyUps.Remove(vkey))
-        {
-            Console.WriteLine(
-                $"{_clock.Elapsed:hh\\:mm\\:ss\\.fff} LOCALSHORTCUT UP   " +
-                $"vk=0x{vkey:X4} consumed=shortcut hookEvents={_hookKeyEventCount}");
-            return true;
-        }
-
-        if (!isKeyUp && IsLocalCommandShortcutModifierActive() && TryMapSemanticShortcut(vkey, out var shortcutAction))
-        {
-            _localCommandShortcutConsumed = true;
-            _localSuppressedKeyUps.Add(vkey);
-            ApplySemanticShortcutLocally("local-command", shortcutAction);
-            Console.WriteLine(
-                $"{_clock.Elapsed:hh\\:mm\\:ss\\.fff} LOCALSHORTCUT DOWN " +
-                $"action={shortcutAction} vk=0x{vkey:X4} hookEvents={_hookKeyEventCount}");
-            return true;
-        }
-
-        if (!isKeyUp)
-        {
-            FlushLocalBufferedCommand();
-        }
-
-        return false;
-    }
-
-    private void BufferLocalCommandDown(ushort vkey, ushort scanCode, bool isExtended)
-    {
-        _localCommandDownBuffered = true;
-        _localCommandShortcutConsumed = false;
-        _localBufferedCommandVkey = vkey;
-        _localBufferedCommandScanCode = scanCode;
-        _localBufferedCommandIsExtended = isExtended;
-        Console.WriteLine(
-            $"{_clock.Elapsed:hh\\:mm\\:ss\\.fff} LOCALMOD DOWN " +
-            $"vk=0x{vkey:X4} buffered=command-shortcut hookEvents={_hookKeyEventCount}");
-    }
-
-    private void FlushLocalBufferedCommand()
-    {
-        if (!_localCommandDownBuffered)
-        {
-            return;
-        }
-
-        ReplayKeyboardHookEvent(_localBufferedCommandVkey, _localBufferedCommandScanCode, false, _localBufferedCommandIsExtended);
-        _localCommandDownBuffered = false;
-        _localCommandShortcutConsumed = false;
-    }
-
-    private void ClearLocalCommandShortcutState()
-    {
-        ClearLocalCommandModifierState();
-        _localSuppressedKeyUps.Clear();
-    }
-
-    private void ClearLocalCommandModifierState()
-    {
-        _localCommandDownBuffered = false;
-        _localCommandShortcutConsumed = false;
-        _localBufferedCommandVkey = 0;
-        _localBufferedCommandScanCode = 0;
-        _localBufferedCommandIsExtended = false;
     }
 
     private void ForwardRemoteKeyboardHook(KBDLLHOOKSTRUCT info)
@@ -859,6 +818,8 @@ internal sealed class LocalBridgeAgent : Form
 
     private bool TryHandleRemoteShortcutChord(ushort vkey, ushort scanCode, bool isKeyUp, bool isExtended)
     {
+        // Windows peers use their native Control/Windows shortcuts unchanged.
+        if (_lan.CurrentPeerDeviceId?.StartsWith("windows:", StringComparison.Ordinal) == true) return false;
         if (IsShortcutModifierKey(vkey))
         {
             if (!isKeyUp)
@@ -875,9 +836,6 @@ internal sealed class LocalBridgeAgent : Form
 
         if (isKeyUp && _remoteSuppressedKeyUps.Remove(vkey))
         {
-            Console.WriteLine(
-                $"{_clock.Elapsed:hh\\:mm\\:ss\\.fff} REMOTESHORTCUT UP   " +
-                $"target={_remoteTargetDeviceId ?? "remote"} vk=0x{vkey:X4} consumed=shortcut hookEvents={_hookKeyEventCount}");
             return true;
         }
 
@@ -892,9 +850,6 @@ internal sealed class LocalBridgeAgent : Form
                 _pendingRemoteModifiers.Update(modifier, false);
             _remoteSuppressedKeyUps.Add(vkey);
             _lan.PublishShortcutInput(shortcutAction);
-            Console.WriteLine(
-                $"{_clock.Elapsed:hh\\:mm\\:ss\\.fff} REMOTESHORTCUT DOWN " +
-                $"target={_remoteTargetDeviceId ?? "remote"} action={shortcutAction} vk=0x{vkey:X4} hookEvents={_hookKeyEventCount}");
             return true;
         }
 
@@ -911,9 +866,6 @@ internal sealed class LocalBridgeAgent : Form
         if (_remoteKeys.Snapshot().Any(key => key.VirtualKey == vkey)) { return; }
         _pendingRemoteModifiers.Update(new HeldKey(vkey, scanCode, isExtended), false);
         if (_remoteMouseButtonsDown.Count > 0) { FlushRemoteBufferedControl(); }
-        Console.WriteLine(
-            $"{_clock.Elapsed:hh\\:mm\\:ss\\.fff} REMOTEMOD DOWN " +
-            $"target={_remoteTargetDeviceId ?? "remote"} vk=0x{vkey:X4} buffered=shortcut hookEvents={_hookKeyEventCount}");
     }
 
     private void FlushRemoteBufferedControl()
@@ -938,10 +890,6 @@ internal sealed class LocalBridgeAgent : Form
         _remoteKeys.Update(new HeldKey(vkey, scanCode, isExtended), isKeyUp);
         _lan.PublishKeyInput(vkey, scanCode, isKeyUp, isExtended, text);
 
-        var action = isKeyUp ? "UP" : "DOWN";
-        Console.WriteLine(
-            $"{_clock.Elapsed:hh\\:mm\\:ss\\.fff} REMOTEKEY {action,-4} " +
-            $"target={_remoteTargetDeviceId ?? "remote"} vk=0x{vkey:X4} scan=0x{scanCode:X4} text={EscapeForLog(text ?? string.Empty)} hookEvents={_hookKeyEventCount}");
     }
 
     private bool IsRemoteShortcutModifierActive()
@@ -950,15 +898,6 @@ internal sealed class LocalBridgeAgent : Form
         // variants and simultaneous Control/Windows keys retain their raw meaning.
         var modifiers = _physicalKeys.Snapshot().Where(key => HeldKeyState.IsModifier(key.VirtualKey)).ToArray();
         return modifiers.Length == 1 && IsShortcutModifierKey(modifiers[0].VirtualKey);
-    }
-
-    private bool IsLocalCommandShortcutModifierActive()
-    {
-        return (IsKeyStateDown(VK_LWIN) || IsKeyStateDown(VK_RWIN))
-            && !IsKeyStateDown(VK_CONTROL)
-            && !IsKeyStateDown(VK_MENU)
-            && !IsKeyStateDown(VK_LMENU)
-            && !IsKeyStateDown(VK_RMENU);
     }
 
     private static bool IsShortcutModifierKey(ushort vkey)
@@ -1001,19 +940,25 @@ internal sealed class LocalBridgeAgent : Form
 
     private string ReplayKeyboardHookEvent(ushort vkey, ushort scanCode, bool isKeyUp, bool isExtended)
     {
+        if (isKeyUp && _localTextKeys.Remove(vkey)) return "unicode-up";
         if (_keyboardReplayMode == KeyboardReplayMode.UnicodePrintable
             && !isKeyUp
+            && !_localKeys.Snapshot().Any(key => key.VirtualKey == vkey)
             && !IsShortcutModifierActive()
             && TryTranslatePrintableKey(vkey, scanCode, out var text))
         {
-            SendUnicodeText(text);
-            return $"unicode:{EscapeForLog(text)}";
+            _localTextKeys.Add(vkey);
+            _inputSink.Text(text);
+            return "unicode";
         }
+        // A text repeat cannot become an unmatched physical down if a modifier
+        // changes while the same key remains held.
+        if (_localTextKeys.Contains(vkey)) return "unicode-repeat";
 
         if (_keyboardReplayMode == KeyboardReplayMode.VirtualKey)
         {
             _localKeys.Update(new HeldKey(vkey, scanCode, isExtended), isKeyUp);
-            SendVirtualKey(vkey, isKeyUp, isExtended);
+            _inputSink.Key(new HeldKey(vkey, 0, isExtended), isKeyUp);
             return "vkey";
         }
 
@@ -1023,7 +968,7 @@ internal sealed class LocalBridgeAgent : Form
         }
 
         _localKeys.Update(new HeldKey(vkey, scanCode, isExtended), isKeyUp);
-        SendScanCode(scanCode, isKeyUp, isExtended);
+        _inputSink.Key(new HeldKey(vkey, scanCode, isExtended), isKeyUp);
         return "scan";
     }
 
@@ -1180,7 +1125,7 @@ internal sealed class LocalBridgeAgent : Form
             $"remoteDisplay={_remoteTopologyDisplayId}");
 
         ReleaseLocalKeys();
-        ClearLocalCommandShortcutState();
+        _localTextKeys.Clear();
         ClearRemoteShortcutState();
         RestorePhysicalModifiers(remote: true);
         TransferMouseButtonsToRemote();
@@ -1261,10 +1206,13 @@ internal sealed class LocalBridgeAgent : Form
     {
         foreach (var key in _localKeys.ReleaseAll())
         {
-            if (_keyboardReplayMode == KeyboardReplayMode.VirtualKey || key.ScanCode == 0)
-                SendVirtualKey(key.VirtualKey, keyUp: true, key.Extended);
-            else
-                SendScanCode(key.ScanCode, keyUp: true, key.Extended);
+            try
+            {
+                if (_keyboardReplayMode == KeyboardReplayMode.VirtualKey || key.ScanCode == 0)
+                    _inputSink.Key(key with { ScanCode = 0 }, true);
+                else _inputSink.Key(key, true);
+            }
+            catch (InvalidOperationException) { Console.WriteLine("Windows could not release a local key; sharing is paused."); }
         }
     }
 
@@ -1278,12 +1226,10 @@ internal sealed class LocalBridgeAgent : Form
     {
         foreach (var key in _physicalKeys.Snapshot().Where(key => HeldKeyState.IsModifier(key.VirtualKey)))
         {
-            if (remote && IsShortcutModifierKey(key.VirtualKey))
+            if (remote && _lan.CurrentPeerDeviceId?.StartsWith("windows:", StringComparison.Ordinal) != true && IsShortcutModifierKey(key.VirtualKey))
                 BufferRemoteControlDown(key.VirtualKey, key.ScanCode, key.Extended);
             else if (remote)
                 PublishRemoteKey(key.VirtualKey, key.ScanCode, false, key.Extended, null);
-            else if (IsCommandKey(key.VirtualKey))
-                BufferLocalCommandDown(key.VirtualKey, key.ScanCode, key.Extended);
             else
                 ReplayKeyboardHookEvent(key.VirtualKey, key.ScanCode, false, key.Extended);
         }
@@ -1727,12 +1673,32 @@ internal sealed class LocalBridgeAgent : Form
         }
     }
 
-    private static void SendAbsoluteMousePosition(int x, int y)
+    private sealed class NativeInputSink : IWindowsInputSink
+    {
+        private static void Require(bool sent)
+        { if (!sent) throw new InvalidOperationException("Windows blocked remote input. Sharing stopped."); }
+        public void Move(int x, int y) => Require(SendAbsoluteMousePosition(x, y));
+        public void Key(HeldKey key, bool up) => Require(key.ScanCode == 0
+            ? SendVirtualKey(key.VirtualKey, up, key.Extended) : SendScanCode(key.ScanCode, up, key.Extended));
+        public void Text(string text) => Require(SendUnicodeText(text));
+        public void Button(string name, bool down)
+        {
+            var button = MouseButtonDefinitions.First(b => b.ProtocolName == name);
+            Require(SendMouseInput(0, 0, button.MouseData, down ? button.SendDownFlag : button.SendUpFlag));
+        }
+        public void Wheel(int vertical, int horizontal)
+        {
+            if (vertical != 0) Require(SendMouseInput(0, 0, unchecked((uint)vertical), MOUSEEVENTF_WHEEL));
+            if (horizontal != 0) Require(SendMouseInput(0, 0, unchecked((uint)horizontal), MOUSEEVENTF_HWHEEL));
+        }
+    }
+
+    private static bool SendAbsoluteMousePosition(int x, int y)
     {
         var bounds = GetVirtualDesktopBounds();
         var normalizedX = NormalizeAbsoluteCoordinate(x, bounds.Left, bounds.Width);
         var normalizedY = NormalizeAbsoluteCoordinate(y, bounds.Top, bounds.Height);
-        SendMouseInput(normalizedX, normalizedY, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK);
+        return SendMouseInput(normalizedX, normalizedY, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK);
     }
 
     private static int NormalizeAbsoluteCoordinate(int value, int origin, int size)
@@ -1746,11 +1712,11 @@ internal sealed class LocalBridgeAgent : Form
         return Math.Clamp(normalized, 0, 65535);
     }
 
-    private static void SendScanCode(ushort scanCode, bool keyUp, bool extended)
+    private static bool SendScanCode(ushort scanCode, bool keyUp, bool extended)
     {
         if (scanCode == 0)
         {
-            return;
+            return true;
         }
 
         var flags = KEYEVENTF_SCANCODE;
@@ -1780,10 +1746,10 @@ internal sealed class LocalBridgeAgent : Form
             }
         };
 
-        SendInputs(input);
+        return SendInputs(input);
     }
 
-    private static void SendVirtualKey(ushort virtualKey, bool keyUp, bool extended)
+    private static bool SendVirtualKey(ushort virtualKey, bool keyUp, bool extended)
     {
         var flags = keyUp ? KEYEVENTF_KEYUP : 0;
         if (extended)
@@ -1807,15 +1773,17 @@ internal sealed class LocalBridgeAgent : Form
             }
         };
 
-        SendInputs(input);
+        return SendInputs(input);
     }
 
-    private static void SendUnicodeText(string text)
+    private static bool SendUnicodeText(string text)
     {
         foreach (var character in text)
         {
-            SendInputs(UnicodeInput(character, keyUp: false), UnicodeInput(character, keyUp: true));
+            if (!SendInputs(UnicodeInput(character, keyUp: false), UnicodeInput(character, keyUp: true)))
+            { SendInputs(UnicodeInput(character, keyUp: true)); return false; }
         }
+        return true;
     }
 
     private static INPUT UnicodeInput(char character, bool keyUp)
@@ -1837,7 +1805,7 @@ internal sealed class LocalBridgeAgent : Form
         };
     }
 
-    private static void SendMouseInput(int dx, int dy, uint mouseData, uint flags)
+    private static bool SendMouseInput(int dx, int dy, uint mouseData, uint flags)
     {
         var input = new INPUT
         {
@@ -1856,16 +1824,17 @@ internal sealed class LocalBridgeAgent : Form
             }
         };
 
-        SendInputs(input);
+        return SendInputs(input);
     }
 
-    private static void SendInputs(params INPUT[] inputs)
+    private static bool SendInputs(params INPUT[] inputs)
     {
         var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
         if (sent != inputs.Length)
         {
             Console.WriteLine($"SendInput failed. sent={sent}/{inputs.Length}, win32={Marshal.GetLastWin32Error()}");
         }
+        return sent == inputs.Length;
     }
 
     private static POINT GetCursorPositionOrThrow()

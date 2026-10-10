@@ -23,7 +23,7 @@ internal sealed class MonitorLayoutCanvas : Control
     public MonitorLayoutCanvas()
     {
         DoubleBuffered = true;
-        BackColor = Color.FromArgb(238, 243, 250);
+        BackColor = DesktopTheme.Background;
         TabStop = true;
         AccessibleName = "Monitor arrangement";
         AccessibleDescription = "Drag the other computer around the selected monitor. Arrow keys choose a side.";
@@ -50,8 +50,9 @@ internal sealed class MonitorLayoutCanvas : Control
         var all = scene.LocalMonitors.Append(scene.Remote).Select(m => m.Bounds).ToArray();
         var left = all.Min(b => b.Left); var top = all.Min(b => b.Top);
         var width = all.Max(b => b.Right) - left + 1; var height = all.Max(b => b.Bottom) - top + 1;
-        _scale = Math.Min((Width - 72f) / width, (Height - 84f) / height);
-        _origin = new PointF((Width - width * _scale) / 2 - left * _scale, (Height - height * _scale) / 2 - top * _scale);
+        var legendHeight = Height < 150 ? 24f : 34f;
+        _scale = Math.Min(Math.Max(1, Width - 56f) / width, Math.Max(1, Height - legendHeight - 8f) / height);
+        _origin = new PointF((Width - width * _scale) / 2 - left * _scale, (Height - legendHeight - height * _scale) / 2 - top * _scale);
         RectangleF Rect(VirtualDesktopBounds b) => new(_origin.X + b.Left * _scale, _origin.Y + b.Top * _scale, b.Width * _scale, b.Height * _scale);
         foreach (var monitor in scene.LocalMonitors)
             DrawMonitor(g, Rect(monitor.Bounds), monitor.Label, monitor.Bounds, monitor.Id == scene.Local.Id, false);
@@ -67,15 +68,15 @@ internal sealed class MonitorLayoutCanvas : Control
                 : new(_origin.X + (float)axis * _scale, _origin.Y + edge * _scale);
             g.DrawLine(seamPen, P(seam.Start), P(seam.End));
         }
-        TextRenderer.DrawText(g, "Green edge = cross here", Font, new Rectangle(14, Height - 31, Width - 28, 24),
+        TextRenderer.DrawText(g, "Green edge = cross here", Font, new Rectangle(14, Height - (int)legendHeight, Width - 28, (int)legendHeight),
             Color.FromArgb(53, 103, 105), TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
         if (Focused) ControlPaint.DrawFocusRectangle(g, new Rectangle(3, 3, Width - 6, Height - 6));
     }
     private void DrawMonitor(Graphics g, RectangleF r, string title, VirtualDesktopBounds bounds, bool selected, bool remote)
     {
         using var path = Rounded(r, Math.Min(10, r.Height / 8));
-        using var fill = new SolidBrush(remote ? Color.FromArgb(36, 54, 83) : Color.White);
-        using var border = new Pen(selected ? Color.FromArgb(46, 116, 229) : Color.FromArgb(194, 208, 228), selected ? 3 : 1);
+        using var fill = new SolidBrush(remote ? DesktopTheme.Sidebar : Color.White);
+        using var border = new Pen(selected ? DesktopTheme.Accent : DesktopTheme.Border, selected ? 3 : 1);
         g.FillPath(fill, path); g.DrawPath(border, path);
         var area = Rectangle.Round(r); area.Inflate(-8, -5);
         using var titleFont = new Font(Font.FontFamily, r.Width < 130 ? 9 : 11, FontStyle.Bold);

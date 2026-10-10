@@ -20,6 +20,7 @@ internal sealed class LanBridgePeer : IDisposable
     private readonly Func<ApprovedPeer[]>? _approvedPeers;
     private readonly SemaphoreSlim _handshakeSlots = new(4);
     private ApprovedPeer? _authenticatedPeer;
+    private bool _connectionIsOutgoing;
     private long _sessionGeneration;
     public long SessionGeneration => Interlocked.Read(ref _sessionGeneration);
     public bool IsSecure => _identity is not null;
@@ -49,6 +50,7 @@ internal sealed class LanBridgePeer : IDisposable
     public event Action<string>? PeerConnected;
     public event Action<string>? PeerDisconnected;
     public event Action<DeviceHelloPayload>? PeerHello;
+    public event Action<string, long, string, JsonElement>? InputMessageReceived;
 
     public LanBridgePeer(DeviceIdentityStore? identity = null, Func<ApprovedPeer[]>? approvedPeers = null)
     {
@@ -125,7 +127,7 @@ internal sealed class LanBridgePeer : IDisposable
     {
         ThrowIfDisposed();
 
-        if (IsSecure) { throw new InvalidOperationException("The secure Windows profile is a listener."); }
+        if (IsSecure) { throw new InvalidOperationException("Use the approved secure connection method."); }
         IPAddress target;
         if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)) { target = IPAddress.Loopback; }
         else if (!IPAddress.TryParse(host, out target!) || !IPAddress.IsLoopback(target))
@@ -143,6 +145,33 @@ internal sealed class LanBridgePeer : IDisposable
             client.Dispose();
             throw;
         }
+    }
+
+    public async Task ConnectSecureAsync(string host, ApprovedPeer peer, int port = SecurePort,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (_identity is null || !_approvedPeers!().Contains(peer) || peer.DeviceId == _deviceId)
+            throw new InvalidOperationException("Approve and select the other computer before connecting.");
+        if (host.Length > 253 || Uri.CheckHostName(host) == UriHostNameType.Unknown || port is < 1 or > 65535)
+            throw new ArgumentException("Enter the other computer's local address or hostname, without a URL or port.");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token, cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(15));
+        var client = new TcpClient();
+        Stream? authenticatedStream = null;
+        try
+        {
+            await client.ConnectAsync(host, port, timeout.Token).ConfigureAwait(false);
+            authenticatedStream = await SecurePeerTransport.AuthenticateClientAsync(client, _identity.Certificate, peer, timeout.Token).ConfigureAwait(false);
+            lock (_connectionLock)
+            {
+                timeout.Token.ThrowIfCancellationRequested();
+                // Selection or approval may have changed during authentication.
+                if (!_approvedPeers!().Contains(peer)) throw new InvalidOperationException("Computer approval changed.");
+                ReplaceConnection(client, authenticatedStream, $"{host}:{port}", peer, outgoing: true);
+            }
+        }
+        catch { authenticatedStream?.Dispose(); client.Dispose(); throw; }
     }
 
     public void PublishEdgeHandoff(string edge, int virtualX, int virtualY, int deltaX, int deltaY, VirtualDesktopBounds bounds)
@@ -300,7 +329,7 @@ internal sealed class LanBridgePeer : IDisposable
         }
     }
 
-    private void ReplaceConnection(TcpClient client, Stream stream, string peerLabel, ApprovedPeer? authenticatedPeer)
+    private void ReplaceConnection(TcpClient client, Stream stream, string peerLabel, ApprovedPeer? authenticatedPeer, bool outgoing = false)
     {
         client.NoDelay = true;
         client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
@@ -311,10 +340,20 @@ internal sealed class LanBridgePeer : IDisposable
         var outbound = new OutboundQueue();
         lock (_connectionLock)
         {
-            if (_disposed)
+            if (_disposed || (authenticatedPeer is not null && !_approvedPeers!().Contains(authenticatedPeer)))
             {
+                writer.Dispose();
                 client.Dispose();
                 return;
+            }
+            if (_client is not null && authenticatedPeer is not null && _authenticatedPeer == authenticatedPeer)
+            {
+                // Both peers can dial after wake. Prefer the same socket on both
+                // sides: the lower device ID's outgoing connection. Otherwise
+                // each side can close the socket the other just selected.
+                var preferOutgoing = string.CompareOrdinal(_deviceId, authenticatedPeer.DeviceId) < 0;
+                if (_connectionIsOutgoing == preferOutgoing && outgoing != preferOutgoing)
+                { writer.Dispose(); client.Dispose(); return; }
             }
             // End the previous session before exposing its replacement. Queued input
             // belongs to one socket and must never spill into the new session.
@@ -335,6 +374,7 @@ internal sealed class LanBridgePeer : IDisposable
             _peerLabel = peerLabel;
             _peerDeviceId = null;
             _authenticatedPeer = authenticatedPeer;
+            _connectionIsOutgoing = outgoing;
             Interlocked.Increment(ref _sessionGeneration);
         }
         Console.WriteLine($"LAN TCP connected: {peerLabel}; waiting for device.hello");
@@ -509,30 +549,49 @@ internal sealed class LanBridgePeer : IDisposable
 
             if (!string.Equals(protocol, BatCaveProtocol.Name, StringComparison.Ordinal))
             {
+                if (_identity is not null) throw new InvalidDataException("Unsupported authenticated protocol.");
                 Console.WriteLine($"LAN RX unsupported protocol={protocol} type={type} from {source}");
                 return;
             }
 
             if (!root.TryGetProperty("payload", out var payload))
             {
+                if (_identity is not null) throw new InvalidDataException("Missing authenticated payload.");
                 Console.WriteLine($"LAN RX {type} from {source} missing payload");
                 return;
             }
 
-            if (payload.ValueKind != JsonValueKind.Object || string.IsNullOrWhiteSpace(source)) { return; }
+            if (payload.ValueKind != JsonValueKind.Object || string.IsNullOrWhiteSpace(source)
+                || string.IsNullOrWhiteSpace(type) || type.Length > 64 || source.Length > 128
+                || source.Any(char.IsControl) || type.Any(char.IsControl))
+            {
+                if (_identity is not null) throw new InvalidDataException("Invalid authenticated envelope.");
+                return;
+            }
             if (type == "device.hello")
             {
                 var helloId = ReadString(payload, "deviceId");
-                if (helloId != source || helloId == _deviceId || helloId == "missing") { return; }
+                if (helloId != source || helloId == _deviceId || helloId == "missing")
+                {
+                    if (_identity is not null) throw new InvalidDataException("Invalid hello identity.");
+                    return;
+                }
                 if (_authenticatedPeer is not null && helloId != _authenticatedPeer.DeviceId)
                 {
                     throw new InvalidDataException("Hello device ID does not match its approved certificate.");
                 }
+                if (_identity is not null && _peerDeviceId is not null)
+                    throw new InvalidDataException("Unexpected repeated hello.");
                 if (_peerDeviceId is null)
                 {
                     var hello = payload.Deserialize<DeviceHelloPayload>(_jsonOptions);
                     if (_identity is not null && (hello?.VirtualDesktopBounds is not { } bounds
-                        || bounds.Width <= 0 || bounds.Height <= 0 || bounds.Width > 100000 || bounds.Height > 100000))
+                        || bounds.Width <= 0 || bounds.Height <= 0 || bounds.Width > 100000 || bounds.Height > 100000
+                        || bounds.Left is < -1_000_000 or > 1_000_000 || bounds.Top is < -1_000_000 or > 1_000_000
+                        // Existing Mac agents advertise an exclusive maximum;
+                        // Windows/Linux advertise the last pixel. Accept both.
+                        || (long)bounds.Right - bounds.Left - bounds.Width is < -1 or > 0
+                        || (long)bounds.Bottom - bounds.Top - bounds.Height is < -1 or > 0))
                         throw new InvalidDataException("Invalid authenticated screen bounds.");
                     _peerDeviceId = helloId;
                     if (hello is not null) { PeerHello?.Invoke(hello); }
@@ -560,9 +619,13 @@ internal sealed class LanBridgePeer : IDisposable
             {
                 DispatchShortcutInput(source ?? "unknown", payload);
             }
+            if (_identity is not null && type is "cursor.handoff" or "input.mouseDelta" or "input.mouseButton"
+                or "input.mouseWheel" or "input.key" or "input.shortcut" or "control.testStop")
+                InputMessageReceived?.Invoke(source!, SessionGeneration, type!, payload);
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
         {
+            if (_identity is not null) throw new InvalidDataException("Invalid authenticated message.", ex);
             Console.WriteLine($"LAN RX invalid json bytes={Encoding.UTF8.GetByteCount(json)}");
         }
     }
@@ -580,9 +643,10 @@ internal sealed class LanBridgePeer : IDisposable
 
             ShortcutInputReceived?.Invoke(sourceDeviceId, shortcut);
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
-            Console.WriteLine($"LAN RX input.shortcut from {sourceDeviceId} parse failed: {ex.Message}");
+            if (_identity is not null) throw new InvalidDataException("Invalid authenticated shortcut.");
+            Console.WriteLine("LAN RX invalid shortcut");
         }
     }
 
@@ -603,15 +667,16 @@ internal sealed class LanBridgePeer : IDisposable
 
             ClipboardTextReceived?.Invoke(sourceDeviceId, clipboard);
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
-            Console.WriteLine($"LAN RX clipboard.text from {sourceDeviceId} parse failed: {ex.Message}");
+            if (_identity is not null) throw new InvalidDataException("Invalid authenticated clipboard.");
+            Console.WriteLine("LAN RX invalid clipboard");
         }
     }
 
     private static bool ShouldLogMessage(string? type)
     {
-        return type is not "input.mouseDelta";
+        return type is not "input.mouseDelta" and not "input.key";
     }
 
     private static string DescribePayload(string? type, JsonElement payload)

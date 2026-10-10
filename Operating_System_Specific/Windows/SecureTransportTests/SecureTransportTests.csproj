@@ -6,12 +6,17 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../BatCaveWindowsAgent/NearbyPairingProtocol.cs" Link="NearbyPairingProtocol.cs" />
+    <Compile Include="../BatCaveWindowsAgent/NearbyDiscovery.cs" Link="NearbyDiscovery.cs" />
+    <None Include="../../../Universal/Protocol/pairing-vectors.json" Link="pairing-vectors.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../../../Universal/Protocol/pairing-vectors.json')" />
     <Compile Include="../BatCaveWindowsAgent/SecurePeerTransport.cs" Link="SecurePeerTransport.cs" />
     <Compile Include="../BatCaveWindowsAgent/DeviceIdentityStore.cs" Link="DeviceIdentityStore.cs" />
     <Compile Include="../BatCaveWindowsAgent/ApprovedPeerStore.cs" Link="ApprovedPeerStore.cs" />
     <Compile Include="../BatCaveWindowsAgent/BoundedFrameReader.cs" Link="BoundedFrameReader.cs" />
     <Compile Include="../BatCaveWindowsAgent/LanBridgePeer.cs" Link="LanBridgePeer.cs" />
     <Compile Include="../BatCaveWindowsAgent/ProtocolMessages.cs" Link="ProtocolMessages.cs" />
+    <Compile Include="../BatCaveWindowsAgent/WindowsInputReceiver.cs" Link="WindowsInputReceiver.cs" />
+    <Compile Include="../BatCaveWindowsAgent/HeldKeyState.cs" Link="HeldKeyState.cs" />
     <Compile Include="../BatCaveWindowsAgent/VirtualDesktopBounds.cs" Link="VirtualDesktopBounds.cs" />
     <Compile Include="../BatCaveWindowsAgent/MonitorLayout.cs" Link="MonitorLayout.cs" />
     <Compile Include="../BatCaveWindowsAgent/SecureTopology.cs" Link="SecureTopology.cs" />

@@ -1,11 +1,12 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using BatCave.WindowsAgent;
 
-internal static class ModifierRegression
+internal static partial class ModifierRegression
 {
     [STAThread]
     private static void Main(string[] args)
@@ -15,6 +16,11 @@ internal static class ModifierRegression
         Application.SetCompatibleTextRenderingDefault(false);
         CheckSetupActions();
         Run().GetAwaiter().GetResult();
+        CheckPairingUi();
+        CheckWindowShutdown();
+        CheckReceivingInput();
+        CheckQueuedInput();
+        CheckPlatformRoles();
         if (args.Length == 2 && args[0] == "--render-preview") { RenderPreview(args[1]); }
         if (args.Length == 2 && args[0] == "--render-setup") { RenderSetup(args[1]); }
     }
@@ -35,8 +41,117 @@ internal static class ModifierRegression
         Require(DesktopSetupFlow.Action(3, new(true, true, false, true, false)).Enabled == false, "lost connection cannot start through saved setup");
         Require(DesktopSetupFlow.Action(3, new(true, true, true, true, false)).Label == "Start sharing", "fresh reconnection needs an explicit start");
         Require(DesktopSetupFlow.Action(3, new(true, true, true, true, true)).Operation == SetupOperation.Pause, "active sharing offers pause");
+        Require(DesktopSetupFlow.Action(1, new(true, true, false, true, false, true, true)).Operation == SetupOperation.Pair, "adding a second computer imports rather than skipping the guide");
+        Require(DesktopSetupFlow.Action(1, new(true, false, false, false, false)).Operation == SetupOperation.Export, "first-computer setup begins with the PC file");
+        Require(DesktopSetupFlow.Status(new(true, false, false, false, false)).StartsWith("No computer added"), "empty setup never claims to be ready");
         Console.WriteLine("PASS: device-linking navigation preserves explicit input activation.");
     }
+
+    private static void CheckPairingUi()
+    {
+        WithPairingFixture((window, approvals, first, second) =>
+        {
+            window.ShowStep(1); Application.DoEvents();
+            Require(!((ComboBox)Get(window, "_peers")).Visible, "empty peer dropdown is hidden");
+            Require(!((Control)Get(window, "_removePeer")).Visible, "empty state has no removal action");
+            Require(((Control)Get(window, "_fileGuide")).Visible, "first-computer file exchange guide is visible");
+            Require(((Button)Get(window, "_start")).Text == "Save Windows file…", "empty setup begins with the PC file");
+            ((Button)Get(window, "_skipExport")).PerformClick(); Application.DoEvents();
+            Require(((Button)Get(window, "_start")).Text == "Add computer…" && ((Control)Get(window, "_receiveInstructions")).Visible,
+                "existing file advances to the receiving instruction and import action");
+            Require(((Control)Get(window, "_receiveTitle")).Top < ((Control)Get(window, "_receiveInstructions")).Top,
+                "receiving instruction heading remains before its body after changing stages");
+            Require(!approvals.Peers.Any(), "navigation never approves a computer");
+            Call(window, "ApplyApproval", first); Application.DoEvents();
+            Require((string)Get(window, "_selectedPeerId") == first.DeviceId, "first approved computer is selected");
+            Require(!((ComboBox)Get(window, "_peers")).Visible, "single computer needs no selector");
+            Require(((Control)Get(window, "_connectPanel")).Visible, "approval reveals the address and receiving-device connection instructions");
+            Call(window, "ApplyApproval", second); Application.DoEvents();
+            Require((string)Get(window, "_selectedPeerId") == second.DeviceId, "new approval replaces old selection");
+            Require(((ComboBox)Get(window, "_peers")).Visible, "multiple approved computers have a selector");
+            Require(Get(window, "_hello") is null, "new approval clears old screen geometry");
+            Call(window, "Unpair"); Application.DoEvents();
+            Require((string)Get(window, "_selectedPeerId") == first.DeviceId && approvals.Peers.Length == 1, "removing one selects the remaining approved computer");
+            Call(window, "Unpair"); Application.DoEvents();
+            Require(((Control)Get(window, "_fileGuide")).Visible && !((ComboBox)Get(window, "_peers")).Visible, "removing last computer restores the guide");
+            Require(!((LocalBridgeAgent)Get(window, "_agent")).IsBridgeActive, "pairing actions never start input");
+        });
+        Console.WriteLine("PASS: first-computer instructions, approved selection, second approval and removal preserve explicit activation.");
+    }
+
+    private static void WithPairingFixture(Action<DesktopWindow, ApprovedPeerStore, DeviceIdentityStore.PairingCard, DeviceIdentityStore.PairingCard> inspect)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "BatCavePairingSmoke-" + Guid.NewGuid().ToString("N"));
+        var firstDirectory = Path.Combine(directory, "first"); var secondDirectory = Path.Combine(directory, "second");
+        using var identity = DeviceIdentityStore.OpenOrCreate(directory);
+        using var first = DeviceIdentityStore.OpenOrCreate(firstDirectory);
+        using var second = DeviceIdentityStore.OpenOrCreate(secondDirectory);
+        try
+        {
+            var approvals = new ApprovedPeerStore(directory);
+            using var window = new DesktopWindow(identity, approvals, directory, inspectionOnly: true);
+            window.StartPosition = FormStartPosition.Manual; window.Location = new(-30000, -30000); window.Show();
+            try { inspect(window, approvals, first.ExportPublicCard("Studio PC"), second.ExportPublicCard("Laptop PC")); }
+            finally { if (!window.IsDisposed) Call(window, "Quit"); }
+            Require(!((LocalBridgeAgent)Get(window, "_agent")).IsHandleCreated, "inspection installs no input hooks");
+        }
+        finally
+        {
+            first.DeleteIdentity(firstDirectory); second.DeleteIdentity(secondDirectory); identity.DeleteIdentity(directory);
+            Directory.Delete(firstDirectory); Directory.Delete(secondDirectory);
+            foreach (var name in new[] { "approved-peers.json", "desktop-settings.json", "monitor-layouts.json" }) File.Delete(Path.Combine(directory, name));
+            Directory.Delete(directory);
+        }
+    }
+
+    private static void CheckWindowShutdown()
+    {
+        const uint queryEndSession = 0x0011, endSession = 0x0016, close = 0x0010;
+        var closeApp = new IntPtr(1); // ENDSESSION_CLOSEAPP: Windows Restart Manager.
+        WithPairingFixture((window, _, _, _) =>
+        {
+            var agent = PrepareSharing(window);
+            window.Close();
+            Require(window.IsDisposed && agent.IsDisposed, "closing the main window exits instead of hiding");
+            Require(!agent.IsBridgeActive, "window close stops sharing before disposing input resources");
+            Require(!((NotifyIcon)Get(window, "_tray")).Visible, "window close removes the tray icon");
+        });
+        WithPairingFixture((window, _, _, _) =>
+        {
+            var agent = PrepareSharing(window);
+            SendMessage(window.Handle, close, IntPtr.Zero, IntPtr.Zero);
+            Require(window.IsDisposed && agent.IsDisposed && !agent.IsBridgeActive, "native WM_CLOSE exits and stops sharing");
+        });
+        WithPairingFixture((window, _, _, _) =>
+        {
+            var agent = PrepareSharing(window);
+            var handle = window.Handle;
+            Require(SendMessage(handle, queryEndSession, IntPtr.Zero, closeApp) != IntPtr.Zero,
+                "Restart Manager shutdown query is accepted");
+            Require(!window.IsDisposed && window.Visible, "shutdown query waits for Windows to confirm the update");
+            Require(!agent.IsBridgeActive && !(bool)Get(window, "_sharing"), "shutdown query pauses sharing safely");
+            SendMessage(handle, endSession, IntPtr.Zero, closeApp);
+            Require(!window.IsDisposed && window.Visible, "cancelled update keeps the window available");
+            Require(!agent.IsBridgeActive, "cancelled update never resumes input automatically");
+            Require(SendMessage(handle, queryEndSession, IntPtr.Zero, closeApp) != IntPtr.Zero, "a subsequent update is accepted");
+            SendMessage(handle, endSession, new IntPtr(1), closeApp);
+            Require(window.IsDisposed && agent.IsDisposed, "confirmed Restart Manager shutdown releases the app window");
+            Require(!((NotifyIcon)Get(window, "_tray")).Visible, "confirmed update removes the tray icon");
+        });
+        Console.WriteLine("PASS: window close and native update shutdown exit cleanly; cancelled updates keep the app paused and visible.");
+
+        static LocalBridgeAgent PrepareSharing(DesktopWindow window)
+        {
+            // Synthetic active state only: inspection mode has no hooks, socket,
+            // or held keys. The real pause/close handlers perform cleanup.
+            var agent = (LocalBridgeAgent)Get(window, "_agent");
+            Set(agent, "_bridgeActive", true); Set(window, "_sharing", true);
+            return agent;
+        }
+    }
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
 
     private static void RenderSetup(string output)
     {
@@ -67,6 +182,51 @@ internal static class ModifierRegression
             Console.WriteLine("PASS: all four native setup screens rendered at default and minimum sizes without input hooks or a listener.");
         }
         finally { identity.DeleteIdentity(directory); Directory.Delete(directory); }
+        WithPairingFixture((window, approvals, first, second) =>
+        {
+            foreach (var small in new[] { false, true })
+            {
+                if (small) window.Size = window.MinimumSize;
+                window.ShowStep(1); Application.DoEvents();
+                Set(window, "_windowsFileShared", false); Call(window, "UpdateSetup");
+                var platforms = (ComboBox)Get(window, "_platform");
+                for (var platform = 0; platform < 3; platform++)
+                {
+                    platforms.SelectedIndex = platform; Application.DoEvents();
+                    CaptureWindow(window, output, "platform-" + platform + (small ? "-small" : ""));
+                }
+                Set(window, "_windowsFileShared", true); Call(window, "UpdateSetup"); Application.DoEvents();
+                CaptureWindow(window, output, "receive" + (small ? "-small" : ""));
+                Call(window, "ApplyApproval", first); Application.DoEvents();
+                CaptureWindow(window, output, "paired" + (small ? "-small" : ""));
+                Call(window, "SetConnectionDirection", true); Application.DoEvents();
+                CaptureWindow(window, output, "connect-outgoing" + (small ? "-small" : ""));
+                Call(window, "SetConnectionDirection", false);
+                var lan = (LanBridgePeer)Get(window, "_lan");
+                // Only a UI fixture: no socket, TLS session, listener or input hooks.
+                Set(lan, "_writer", new StreamWriter(Stream.Null)); Set(lan, "_peerDeviceId", first.DeviceId);
+                Set(window, "_hello", new DeviceHelloPayload(first.DeviceId, "Studio PC", "Windows", "BatCave", new(0, 0, 2560, 1440, 2559, 1439)));
+                Call(window, "RefreshLayout"); window.ShowStep(3); Application.DoEvents();
+                CaptureWindow(window, output, "connected" + (small ? "-small" : ""));
+                window.ShowStep(2); Application.DoEvents();
+                CaptureWindow(window, output, "layout" + (small ? "-small" : ""));
+                ((ComboBox)Get(window, "_role")).SelectedIndex = 1; Application.DoEvents();
+                CaptureWindow(window, output, "receiver-layout" + (small ? "-small" : ""));
+                window.ShowStep(3); Application.DoEvents();
+                CaptureWindow(window, output, "receiver-link" + (small ? "-small" : ""));
+                ((ComboBox)Get(window, "_role")).SelectedIndex = 0;
+                Set(lan, "_writer", null!); Set(lan, "_peerDeviceId", null!); Set(window, "_hello", null!);
+                Call(window, "Unpair");
+            }
+        });
+    }
+
+    private static void CaptureWindow(DesktopWindow window, string output, string name)
+    {
+        using var bitmap = new System.Drawing.Bitmap(window.Width, window.Height);
+        window.DrawToBitmap(bitmap, new(0, 0, bitmap.Width, bitmap.Height));
+        bitmap.Save(Path.Combine(output, name + ".png"));
+        Require(!((LocalBridgeAgent)Get(window, "_agent")).IsHandleCreated, "rendered states install no input hooks");
     }
 
     private static void RenderPreview(string path)
