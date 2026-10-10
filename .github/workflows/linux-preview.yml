@@ -43,15 +43,18 @@ jobs:
           GSK_RENDERER: cairo
           PYTHONPATH: Operating_System_Specific/Linux:Operating_System_Specific/Linux/tests
         run: |
-          dbus-run-session -- xvfb-run -a python3 Operating_System_Specific/Linux/tests/render_desktop.py /tmp/batcave-linux-setup.png
+          for view in permissions pair layout link files details; do
+            dbus-run-session -- xvfb-run -a python3 Operating_System_Specific/Linux/tests/render_desktop.py \
+              "/tmp/batcave-linux-$view.png" "$view" small
+          done
       - name: Build separate Debian preview
         run: sh Operating_System_Specific/Linux/scripts/package.sh
       - name: Install and remove on the disposable runner
         run: |
           profile=$(mktemp -d /tmp/batcave-package-check.XXXXXXXX)
           export XDG_DATA_HOME="$profile"
-          sudo apt-get install -y ./Operating_System_Specific/Linux/.build/batcave-linux-preview_0.2.0~preview.1_amd64.deb
-          test "$(batcave-linux-preview --version)" = '0.2.0-preview.1'
+          sudo apt-get install -y ./Operating_System_Specific/Linux/.build/batcave-linux-preview_0.2.0~preview.2_amd64.deb
+          test "$(batcave-linux-preview --version)" = '0.2.0-preview.2'
           batcave-linux-preview --diagnose > /tmp/batcave-diagnose.json || test "$?" = 2
           test ! -e "$profile/batcave/secure-preview/identity.json"
           mkdir -p "$profile/batcave/secure-preview"

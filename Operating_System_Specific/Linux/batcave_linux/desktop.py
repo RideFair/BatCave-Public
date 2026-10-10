@@ -1,6 +1,6 @@
 """Native GTK setup. Permission, trust and active input are separate decisions."""
 
-import json
+import ipaddress
 import os
 import stat
 import threading
@@ -9,7 +9,7 @@ from pathlib import Path
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, Gio, GLib, Gtk
+from gi.repository import Gdk, Gio, GLib, Gtk, Pango
 
 from .ei import EiBackend
 from .identity import Approvals, Card, Identity, SecretVault, strict_json
@@ -19,10 +19,13 @@ from .protocol import Bounds
 from .storage import StateDirectory, profile_path
 from .transfers import MAX_BATCH, MAX_FILE, leaf_name
 from .transport import Connection, Inbox
+from .setup_flow import STEP_TITLES, SetupState, primary_action
 
 
 def text(value, style=None):
     widget = Gtk.Label(label=value, xalign=0, wrap=True)
+    widget.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    widget.set_max_width_chars(72)
     if style: widget.add_css_class(style)
     return widget
 
@@ -47,12 +50,14 @@ def card(title, explanation):
 
 class Window(Gtk.ApplicationWindow):
     def __init__(self, application, fixture=None):
-        super().__init__(application=application, title="BatCave — Linux secure preview", default_width=1080, default_height=760)
-        self.set_size_request(860, 680)
+        super().__init__(application=application, title="BatCave — Linux secure preview", default_width=1000, default_height=760)
+        self.set_size_request(880, 640)
         self.state = self.identity = self.approvals = self.connection = self.input = self.portal = None
         self.inbox = Inbox()
         self.epoch = 0
         self.connected = False
+        self.connecting = False
+        self.remote_bounds = None
         self.backend = EiBackend(application.library)
         self.files = []
         self.bus_subscriptions = []
@@ -60,6 +65,7 @@ class Window(Gtk.ApplicationWindow):
         self.lifecycle_ready = False
         self.shutting_down = False
         self.peer_ids = []
+        self.setup_step = 0
         self._build()
         self.connect("close-request", self._close)
         self.tick = GLib.timeout_add(20, self._tick)
@@ -71,79 +77,224 @@ class Window(Gtk.ApplicationWindow):
     def _build(self):
         css = Gtk.CssProvider()
         css.load_from_data(b"""
-            .content { background: #f4f7fb; color: #18283d; }
-            .header { background: #ffffff; padding: 22px 28px; border-bottom: 1px solid #dce4ef; }
-            .brand { font-size: 26px; font-weight: 700; }
-            .subtitle, .muted { color: #56677f; }
-            .card { background: #ffffff; border: 1px solid #dce4ef; border-radius: 12px; padding: 22px; }
-            .card-title { font-size: 18px; font-weight: 700; }
-            .badge { background: #e7eef9; color: #34547b; border-radius: 20px; padding: 7px 12px; }
-            .status { background: #e7eef9; color: #28445f; border-radius: 8px; padding: 14px; }
-            .drop-zone { border: 2px dashed #aac0dc; border-radius: 12px; padding: 30px; }
+            .content { background: #f5f7fb; color: #18283d; }
+            .header { background: #ffffff; padding: 18px 24px; border-bottom: 1px solid #dce4ef; }
+            .brand { font-size: 25px; font-weight: 700; }
+            .subtitle, .muted { color: #5c6c83; }
+            .card { background: #ffffff; border: 1px solid #dce4ef; border-radius: 14px; padding: 24px; }
+            .card-title { font-size: 22px; font-weight: 700; }
+            .link-card { padding: 14px 18px; }
+            .desktop-tile { background: #edf2fa; border: 1px solid #dce4ef; border-radius: 10px; padding: 12px; }
+            .hero { font-size: 30px; font-weight: 700; }
+            .step { background: transparent; border: 0; box-shadow: none; color: #66778e; padding: 12px 8px; }
+            .step.current { background: #e7eefb; color: #245496; font-weight: 700; border-radius: 10px; }
+            .status { color: #425b79; padding: 4px 0; }
+            .drop-zone { border: 2px dashed #aac0dc; border-radius: 12px; padding: 24px; }
             .file-row { padding: 10px; border-bottom: 1px solid #e3e9f1; }
-            button { padding: 9px 14px; }
-            entry { padding: 7px; }
+            button { padding: 10px 16px; }
+            entry { padding: 8px; }
         """)
         Gtk.StyleContext.add_provider_for_display(self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         root = column(0); root.add_css_class("content"); self.set_child(root)
         header = Gtk.Box(spacing=20); header.add_css_class("header")
-        brand = column(4); brand.set_hexpand(True)
-        brand.append(text("BatCave", "brand")); brand.append(text("Connect your Linux desktop securely", "subtitle"))
-        header.append(brand); header.append(text("LINUX PREVIEW", "badge")); root.append(header)
-        tabs = Gtk.StackSwitcher(halign=Gtk.Align.CENTER, margin_top=16, margin_bottom=16)
+        brand = column(2); brand.set_hexpand(True)
+        brand.append(text("BatCave", "brand")); brand.append(text("Your computers, together", "subtitle"))
+        header.append(brand)
         self.stack = Gtk.Stack(hexpand=True, vexpand=True)
-        tabs.set_stack(self.stack); root.append(tabs); root.append(self.stack)
-        setup = Gtk.Box(spacing=20, margin_start=28, margin_end=28, margin_bottom=20)
-        left, right = column(16), column(16); left.set_hexpand(True); right.set_size_request(300, -1)
-        setup.append(left); setup.append(right)
-        setup_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
-        setup_scroll.set_child(setup); self.stack.add_titled(setup_scroll, "setup", "Connection")
-        pair = card("1   Pair your computers", "Exchange public cards through a trusted channel. Approve the full fingerprint on both computers.")
-        self.fingerprint = text("Opening your desktop keyring…", "muted"); self.fingerprint.set_selectable(True)
-        pair.append(self.fingerprint)
-        actions = Gtk.Box(spacing=10)
-        self.export = button("Export my card", self._export)
-        self.import_card = button("Import a card", self._import)
-        self.export.set_sensitive(False); self.import_card.set_sensitive(False)
-        actions.append(self.export); actions.append(self.import_card); pair.append(actions); left.append(pair)
-        connect = card("2   Connect to Windows", "Choose an approved computer and enter the address shown in its secure preview.")
-        self.peers = Gtk.DropDown.new_from_strings([]); self.peers.connect("notify::selected", lambda *_: self._peer_changed())
-        connect.append(self.peers)
-        row = Gtk.Box(spacing=10)
-        self.address = Gtk.Entry(placeholder_text="Windows IP address", hexpand=True)
-        row.append(self.address); row.append(button("Unpair", self._unpair)); connect.append(row)
-        self.grant = button("Grant desktop input permission", self._grant)
-        connect.append(self.grant)
-        row = Gtk.Box(spacing=10)
-        self.connect_button = button("Connect securely", self._connect, True); self.connect_button.set_sensitive(False)
-        row.append(self.connect_button); row.append(button("Disconnect", self._stop)); connect.append(row); left.append(connect)
-        control = card("3   Allow input when ready", "A secure connection starts idle. Enable input, then cross from Windows to this desktop.")
-        self.allow = button("Allow input", self._allow, True); self.allow.set_sensitive(False)
-        control.append(self.allow); control.append(button("Pause and restore local control", self._stop)); left.append(control)
-        state = card("Connection status", "Permissions and pairing are checked separately.")
-        self.permission_label = text("Input permission: not granted", "muted")
-        self.connection_label = text("Secure connection: disconnected", "muted")
-        self.sharing_label = text("Input sharing: paused", "muted")
-        for widget in (self.permission_label, self.connection_label, self.sharing_label): state.append(widget)
-        right.append(state)
-        safety = card("Your desktop stays in control", "Pause closes the connection and releases held input. Permission revocation, screen lock and sleep also stop sharing.")
-        safety.append(text("This preview receives input from Windows. Linux-controlled Windows and live Wayland verification are still pending.", "muted"))
-        right.append(safety)
-        monitors = card("Monitor layout", "Windows configures the shared boundary. Linux uses the coordinate regions granted by its desktop, including gaps between monitors.")
-        self.geometry = text("Grant permission to detect input regions.", "muted"); monitors.append(self.geometry); right.append(monitors)
-        files = column(16); files.set_margin_start(28); files.set_margin_end(28); files.set_margin_bottom(20)
-        intro = card("File shelf", "Drop local files here to prepare them. Network transfer stays disabled until the shared transfer protocol is available.")
+        tabs = Gtk.StackSwitcher(halign=Gtk.Align.CENTER)
+        tabs.set_stack(self.stack); header.append(tabs)
+        self.pause_button = button("Pause sharing", self._stop)
+        self.pause_button.set_sensitive(False); header.append(self.pause_button); root.append(header)
+        root.append(self.stack)
+        setup = column(16); setup.set_margin_start(24); setup.set_margin_end(24); setup.set_margin_top(16); setup.set_margin_bottom(20)
+        self.stack.add_titled(setup, "setup", "Devices")
+        steps = Gtk.Box(spacing=8, homogeneous=True)
+        self.step_buttons = []
+        for index, title in enumerate(STEP_TITLES):
+            widget = button(f"{index + 1}  {title}", lambda index=index: self._show_step(index))
+            widget.add_css_class("step"); steps.append(widget); self.step_buttons.append(widget)
+        setup.append(steps)
+        self.page_scroll = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
+        self.page_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        setup.append(self.page_scroll)
+        self.pages = Gtk.Stack(hexpand=True, vexpand=True, transition_type=Gtk.StackTransitionType.CROSSFADE)
+        self.pages.set_vhomogeneous(False)
+        self.page_scroll.set_child(self.pages)
+
+        permissions = card("One keyboard. Both computers.", "Use your Windows keyboard and mouse on this Linux desktop.")
+        self.permission_summary = text("Grant access when you're ready.")
+        permissions.append(self.permission_summary)
+        permissions.append(text("Your desktop will ask before BatCave can receive keyboard and mouse input.", "muted"))
+        permissions.append(text("Access alone doesn't start sharing. You'll choose a trusted computer next.", "muted"))
+        self.pages.add_named(permissions, "0")
+
+        pair = card("Pair with your Windows computer", "Exchange public device cards and confirm the fingerprint shown on the other computer.")
+        self.pair_summary = text("Add the Windows computer you want to use.")
+        pair.append(self.pair_summary)
+        self.export = button("Export device card", self._export)
+        self.export.set_sensitive(False)
+        card_actions = Gtk.Box(spacing=10); card_actions.append(self.export)
+        self.import_another = button("Import another card", self._import)
+        self.import_another.set_visible(False); card_actions.append(self.import_another)
+        pair.append(card_actions)
+        pair.append(text("Paired computer", "muted"))
+        self.peers = Gtk.DropDown.new_from_strings([]); self.peers.set_hexpand(True)
+        self.peers.connect("notify::selected", lambda *_: self._peer_changed())
+        pair.append(self.peers)
+        pair.append(text("Cards contain public identity information. Your private key stays on this computer.", "muted"))
+        self.pages.add_named(pair, "1")
+
+        layout = card("Arrange screens", "Match this side in BatCave on Windows. Windows controls the shared screen boundary.")
+        layout.add_css_class("link-card"); layout.set_spacing(8)
+        layout.append(text("Windows address", "muted"))
+        self.address = Gtk.Entry(placeholder_text="Address shown in BatCave on Windows", hexpand=True)
+        self.address.connect("changed", lambda *_: self._update_setup())
+        layout.append(self.address)
+        self.connection_summary = text("Choose your computer and enter its Windows address.")
+        layout.append(self.connection_summary)
+        self.side = Gtk.DropDown.new_from_strings(["Linux is on the right", "Linux is on the left"])
+        self.side.connect("notify::selected", lambda *_: self._arrange_tiles()); layout.append(self.side)
+        self.desktop_tiles = Gtk.Box(spacing=12, homogeneous=True)
+        self.windows_tile, self.windows_geometry = self._desktop_tile("Windows")
+        self.linux_tile, self.linux_geometry = self._desktop_tile("Linux")
+        self._arrange_tiles(); layout.append(self.desktop_tiles)
+        layout.append(text("Each computer is shown as one desktop. This guide doesn't change the Windows layout.", "muted"))
+        self.pages.add_named(layout, "2")
+
+        link = card("Link devices", "Enable Linux input here, then choose Start sharing on Windows.")
+        self.link_summary = text("Choose your computer and enter its address.")
+        link.append(self.link_summary)
+        link.append(text("Move through the shared edge on Windows to use Linux. Pause sharing restores local control.", "muted"))
+        link.append(text("You can save this setup for next time. Reconnecting always asks you to enable input again.", "muted"))
+        self.pages.add_named(link, "3")
+
+        self.details = Gtk.Expander(label="Connection details")
+        detail_box = column(6); detail_box.set_margin_top(10)
+        self.fingerprint = text("Opening your device…", "muted"); self.fingerprint.set_selectable(True)
+        self.peer_fingerprint = text("No device paired.", "muted"); self.peer_fingerprint.set_selectable(True)
+        self.permission_label = text("Desktop access: not granted", "muted")
+        self.connection_label = text("Connection: not linked", "muted")
+        self.sharing_label = text("Sharing: paused", "muted")
+        self.geometry = text("Display regions appear after granting access.", "muted")
+        for widget in (self.fingerprint, self.peer_fingerprint, self.permission_label, self.connection_label, self.sharing_label, self.geometry):
+            detail_box.append(widget)
+        detail_box.append(text("Arrange the shared screen boundary in BatCave on Windows.", "muted"))
+        self.remove_peer = button("Remove paired device", self._unpair)
+        detail_box.append(self.remove_peer)
+        self.detail_scroll = Gtk.ScrolledWindow(min_content_height=180)
+        self.detail_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.detail_scroll.set_child(detail_box)
+        self.details.set_child(self.detail_scroll); setup.append(self.details)
+        self.status = text("Opening your device…", "status"); setup.append(self.status)
+        actions = Gtk.Box(spacing=12)
+        self.back = button("Back", lambda: self._show_step(max(0, self.setup_step - 1)))
+        actions.append(self.back)
+        spacer = Gtk.Box(hexpand=True); actions.append(spacer)
+        self.save_setup = button("Save setup", lambda: self._guard(self._save_setup))
+        actions.append(self.save_setup)
+        self.primary = button("Continue", self._activate_primary, True)
+        actions.append(self.primary); setup.append(actions)
+
+        files = column(16); files.set_margin_start(24); files.set_margin_end(24); files.set_margin_top(16); files.set_margin_bottom(20)
+        intro = card("Files", "Keep files here with their original icons. Sending between devices is coming next.")
         drop = column(); drop.add_css_class("drop-zone"); drop.append(text("Drop files here", "card-title"))
-        drop.append(text("Original file icons appear in this shelf and native drag previews.", "muted"))
+        drop.append(text("Or choose files below.", "muted"))
         target = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY); target.connect("drop", self._drop)
         drop.add_controller(target); intro.append(drop); files.append(intro)
         self.file_list = column(0)
         scroll = Gtk.ScrolledWindow(vexpand=True); scroll.set_child(self.file_list); files.append(scroll)
         row = Gtk.Box(spacing=10); row.append(button("Choose files", self._choose_files)); row.append(button("Clear shelf", self._clear_files))
-        disabled = button("Send files — not yet available", lambda: None); disabled.set_sensitive(False); row.append(disabled)
-        files.append(row); self.stack.add_titled(files, "files", "Files")
-        self.status = text("Setting up the secure preview…", "status")
-        self.status.set_margin_start(28); self.status.set_margin_end(28); self.status.set_margin_bottom(20); root.append(self.status)
+        disabled = button("Send files", lambda: None); disabled.set_sensitive(False); row.append(disabled)
+        files.append(row)
+        self.file_status = text("Files stay on this computer until you drag them out of the shelf.", "status")
+        files.append(self.file_status); self.stack.add_titled(files, "files", "Files")
+        self._show_step(0)
+
+    def _show_step(self, step):
+        if not 0 <= step < len(STEP_TITLES): return
+        self.setup_step = step; self.pages.set_visible_child_name(str(step))
+        for index, widget in enumerate(self.step_buttons):
+            if index == step: widget.add_css_class("current")
+            else: widget.remove_css_class("current")
+        self.back.set_visible(step > 0)
+        self.save_setup.set_visible(step == 3)
+        self._update_setup()
+
+    def _desktop_tile(self, title):
+        tile = column(3); tile.add_css_class("desktop-tile")
+        heading = Gtk.Box(spacing=8)
+        heading.append(Gtk.Image.new_from_icon_name("computer-symbolic")); heading.append(text(title)); tile.append(heading)
+        geometry = text("After linking", "muted"); tile.append(geometry)
+        return tile, geometry
+
+    def _arrange_tiles(self):
+        if not hasattr(self, "windows_tile"): return
+        while self.desktop_tiles.get_first_child(): self.desktop_tiles.remove(self.desktop_tiles.get_first_child())
+        order = (self.windows_tile, self.linux_tile) if self.side.get_selected() == 0 else (self.linux_tile, self.windows_tile)
+        for tile in order: self.desktop_tiles.append(tile)
+
+    def _save_setup(self):
+        peer = self._peer()
+        if not peer or not self._setup_state().address_valid: raise ValueError("Pair a computer and enter its Windows address first.")
+        self.state.write("connection-preferences.json", {"peerId": peer.device_id, "address": self.address.get_text().strip(),
+                         "linuxOnRight": self.side.get_selected() == 0})
+        self.status.set_text("Setup saved. Input still needs your approval each time you reconnect.")
+
+    def _setup_state(self):
+        try:
+            address = ipaddress.ip_address(self.address.get_text().strip())
+            address_valid = not (address.is_unspecified or address.is_multicast)
+        except ValueError:
+            address_valid = False
+        return SetupState(self.identity is not None, self.lifecycle_ready, self.grant_started,
+                          self.lifecycle_ready and self.backend.ready(), self._peer() is not None if self.approvals else False,
+                          address_valid, self.connecting, self.connected, bool(self.input and self.input.armed))
+
+    def _update_setup(self):
+        if not hasattr(self, "primary"): return
+        state = self._setup_state()
+        action = primary_action(self.setup_step, state)
+        if self.primary.get_label() != action.label: self.primary.set_label(action.label)
+        self.primary.set_sensitive(action.enabled)
+        self.pause_button.set_sensitive(state.connected or state.connecting or state.armed)
+        self.save_setup.set_sensitive(state.peer_selected and state.address_valid)
+        if state.permission_ready:
+            self.permission_summary.set_text("Ready to receive your keyboard and mouse.")
+        elif state.permission_pending:
+            self.permission_summary.set_text("Choose Allow in your desktop's permission window.")
+        elif state.identity_ready and not state.desktop_ready:
+            self.permission_summary.set_text("Desktop session services aren't available. Input sharing is paused.")
+        else:
+            self.permission_summary.set_text("Grant access when you're ready.")
+        peer = self._peer() if self.approvals else None
+        self.import_another.set_visible(state.peer_selected)
+        self.remove_peer.set_sensitive(state.peer_selected)
+        self.pair_summary.set_text("Paired with " + peer.display_name + "." if peer else "Add the Windows computer you want to use.")
+        self.peer_fingerprint.set_text("Paired device SHA-256\n" + peer.fingerprint if peer else "No device paired.")
+        if state.permission_ready:
+            bounds = self.backend.bounds(); self.linux_geometry.set_text(f"{bounds.width} × {bounds.height}")
+        else: self.linux_geometry.set_text("After desktop access")
+        self.windows_geometry.set_text(f"{self.remote_bounds.width} × {self.remote_bounds.height}" if state.connected and self.remote_bounds else "After linking")
+        if state.armed:
+            self.link_summary.set_text("Ready for Windows input. Choose Start sharing on Windows and move through the shared edge.")
+        elif state.connected:
+            self.link_summary.set_text("Devices are securely linked. Choose Enable Linux input when you're ready.")
+        elif state.connecting:
+            self.link_summary.set_text("Linking your devices securely…")
+        elif not state.permission_ready:
+            self.link_summary.set_text("Grant desktop access before linking your devices.")
+        else:
+            self.link_summary.set_text("Choose your computer and enter its Windows address.")
+        self.connection_summary.set_text("Encrypted connection verified." if state.connected else self.link_summary.get_text())
+
+    def _activate_primary(self):
+        action = primary_action(self.setup_step, self._setup_state())
+        if not action.enabled: return
+        operations = {"next": lambda: self._show_step(min(3, self.setup_step + 1)), "grant": self._grant,
+                      "import": self._import, "permission": lambda: self._show_step(0),
+                      "pair": lambda: self._show_step(1), "connect": self._connect,
+                      "start": self._allow, "pause": self._stop}
+        self._guard(operations.get(action.operation, lambda: None))
 
     def _initialize(self):
         state = None
@@ -163,7 +314,7 @@ class Window(Gtk.ApplicationWindow):
         self.connection = Connection(identity, self.inbox)
         self.input = InputSession(identity.card.device_id, self.backend)
         self.fingerprint.set_text("My SHA-256 fingerprint\n" + " ".join(identity.card.fingerprint[i:i + 8] for i in range(0, 64, 8)))
-        self.export.set_sensitive(True); self.import_card.set_sensitive(True)
+        self.export.set_sensitive(True)
         self._refresh_peers(); self._watch_lifecycle()
         try:
             saved = state.read("connection-preferences.json", 4096)
@@ -173,15 +324,19 @@ class Window(Gtk.ApplicationWindow):
                 if isinstance(address, str) and len(address) <= 64: self.address.set_text(address)
                 peer_id = preferences.get("peerId")
                 if peer_id in self.peer_ids: self.peers.set_selected(self.peer_ids.index(peer_id))
+                side = preferences.get("linuxOnRight", True)
+                if type(side) is bool: self.side.set_selected(0 if side else 1)
         except (ValueError, OSError, AttributeError):
             self.status.set_text("Saved connection preferences could not be read. Enter the Windows address again.")
         if self.lifecycle_ready:
-            self.status.set_text("Pair both computers, grant input permission, then connect. Sharing stays paused until you allow it.")
+            self.status.set_text("Your device is ready. Continue to link your computers.")
+        self._update_setup()
         return False
 
     def _refresh_peers(self):
         self.peer_ids = list(self.approvals.cards)
         self.peers.set_model(Gtk.StringList.new([self.approvals.cards[key].display_name for key in self.peer_ids]))
+        self._update_setup()
 
     def _peer(self):
         selected = self.peers.get_selected()
@@ -240,6 +395,7 @@ class Window(Gtk.ApplicationWindow):
                 raise RuntimeError("A desktop session with sleep and lock notifications is required.")
             if self.portal is None: self.portal = Portal(self.backend, self._portal_changed)
             self.portal.grant(); self.grant_started = True
+            self._update_setup()
         self._guard(action)
 
     def _portal_changed(self, message, failed=False):
@@ -250,16 +406,23 @@ class Window(Gtk.ApplicationWindow):
 
     def _connect(self):
         def action():
+            if not self.lifecycle_ready or not self.backend.ready(): raise RuntimeError("Grant desktop access before linking devices.")
             if not self._peer(): raise ValueError("Import and approve the Windows computer's card first.")
             self._stop()
+            self._save_setup()
             self.epoch = self.connection.connect(self.address.get_text().strip(), self._peer(), self.backend.bounds())
-            self.state.write("connection-preferences.json", {"peerId": self._peer().device_id, "address": self.address.get_text().strip()})
-            self.status.set_text("Connecting with mutual TLS 1.3…")
+            self.connecting = True
+            self.status.set_text("Linking your devices securely…")
+            self._update_setup()
         self._guard(action)
 
     def _allow(self):
-        self._guard(lambda: self.input.enable(self.backend.bounds()))
-        if self.input.armed: self.status.set_text("Input allowed. Cross the configured boundary from Windows to begin.")
+        def action():
+            if not self.lifecycle_ready or not self.connected: raise RuntimeError("Link devices before starting sharing.")
+            self.input.enable(self.backend.bounds())
+        self._guard(action)
+        if self.input.armed: self.status.set_text("Ready for Windows input. Choose Start sharing on Windows.")
+        self._update_setup()
 
     def _stop(self):
         try:
@@ -272,10 +435,12 @@ class Window(Gtk.ApplicationWindow):
             else:
                 self.epoch += 1
         self.connected = False
-        self.allow.set_sensitive(False)
+        self.connecting = False
+        self.remote_bounds = None
+        self._update_setup()
         self.connection_label.set_text("Secure connection: disconnected")
         self.sharing_label.set_text("Input sharing: paused")
-        self.status.set_text("Sharing paused. Reconnect and allow input when ready.")
+        self.status.set_text("Sharing paused. Reconnect and choose Enable Linux input when ready.")
 
     def _tick(self):
         if self.shutting_down: return False
@@ -284,19 +449,22 @@ class Window(Gtk.ApplicationWindow):
             for epoch, kind, value in self.inbox.drain():
                 if epoch != self.epoch: continue
                 if kind == "connected":
-                    self.connected = True; self.input.connected(epoch)
+                    self.connected = True; self.connecting = False; self.input.connected(epoch)
+                    self.remote_bounds = value
                     self.connection_label.set_text("Secure connection: TLS 1.3 verified")
-                    self.status.set_text("Connected securely. Input stays paused until you allow it.")
+                    self.status.set_text("Devices linked securely. Choose Enable Linux input when ready.")
                 elif kind == "disconnected": self._stop(); self.status.set_text(value)
                 elif kind == "message": self.input.handle(epoch, value)
             ready = self.backend.ready()
             if ready: self.grant_started = False
-            self.grant.set_sensitive(self.lifecycle_ready and not self.grant_started)
-            self.connect_button.set_sensitive(ready and self.connection is not None and self._peer() is not None)
-            self.allow.set_sensitive(ready and self.connected and not self.input.armed)
+            self._update_setup()
+
             if ready:
-                self.permission_label.set_text("Input permission: keyboard and mouse ready")
+                self.permission_label.set_text("Desktop access: keyboard and mouse ready")
                 bounds = self.backend.bounds(); self.geometry.set_text(f"Authorized desktop: {bounds.width} × {bounds.height}")
+            else:
+                self.permission_label.set_text("Desktop access: waiting for approval" if self.grant_started else "Desktop access: not granted")
+                self.geometry.set_text("Display regions appear after granting access.")
             self.sharing_label.set_text("Input sharing: active" if self.input and self.input.owns_cursor else
                                         "Input sharing: awaiting a handoff" if self.input and self.input.armed else "Input sharing: paused")
         except Exception:
@@ -336,7 +504,7 @@ class Window(Gtk.ApplicationWindow):
             self.lifecycle_ready = True
         except GLib.Error:
             # A real desktop must supply lifecycle signals; do not arm without them.
-            self.grant.set_sensitive(False)
+            self._update_setup()
             self.status.set_text("Desktop session services are unavailable. Setup works, but input sharing is disabled.")
 
     def _suspend(self):
@@ -344,6 +512,7 @@ class Window(Gtk.ApplicationWindow):
         self.grant_started = False
         if self.portal: self.portal.close()
         self.permission_label.set_text("Input permission: grant again after unlocking")
+        self._update_setup()
 
     def _lifecycle_lost(self):
         self.lifecycle_ready = False
@@ -392,14 +561,18 @@ class Window(Gtk.ApplicationWindow):
             paintable = Gtk.IconTheme.get_for_display(self.get_display()).lookup_by_gicon(icon, 64, 1, Gtk.TextDirection.NONE, Gtk.IconLookupFlags.PRELOAD)
             source.set_icon(paintable, 0, 0); row.add_controller(source); self.file_list.append(row)
         self.status.set_text("Files staged locally with their source icons. Network file transfer is not enabled in this preview.")
+        self.file_status.set_text("Files staged locally with their source icons. Sending between devices is coming next.")
 
     def _clear_files(self):
         for _, fd in self.files: os.close(fd)
         self.files.clear()
         while self.file_list.get_first_child(): self.file_list.remove(self.file_list.get_first_child())
+        self.file_status.set_text("Files stay on this computer until you drag them out of the shelf.")
 
     def _error(self, message):
-        self.status.set_text(message); return False
+        self.status.set_text(message)
+        if self.stack.get_visible_child_name() == "files": self.file_status.set_text(message)
+        return False
 
     def _guard(self, action):
         try: action()

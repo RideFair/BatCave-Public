@@ -6,7 +6,7 @@ if test -n "$(git -C "$root" status --porcelain)"; then
     exit 1
 fi
 sh "$root/scripts/build.sh"
-version=0.2.0~preview.1
+version=0.2.0~preview.2
 architecture=$(dpkg --print-architecture)
 output="$root/.build"
 stage=$(mktemp -d "${TMPDIR:-/tmp}/batcave-package.XXXXXXXX")

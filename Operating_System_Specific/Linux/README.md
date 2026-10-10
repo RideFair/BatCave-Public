@@ -32,7 +32,7 @@ sudo apt install build-essential pkg-config libei-dev libeis-dev python3 python3
 cd Operating_System_Specific/Linux
 sh scripts/test.sh
 sh scripts/package.sh
-sudo apt install ./.build/batcave-linux-preview_0.2.0~preview.1_amd64.deb
+sudo apt install ./.build/batcave-linux-preview_0.2.0~preview.2_amd64.deb
 ```
 
 Packaging requires a clean committed source tree. It creates a fresh stage,
@@ -54,10 +54,16 @@ dialogs still need testing. Only amd64 has been tested so far.
 
 ## Pair and share
 
-Export the Linux public card and import it into the Windows secure preview.
-Import Windows's card on Linux and explicitly approve the full SHA-256 fingerprint
-shown by Windows. On Linux, grant desktop input permission, enter the Windows
-preview's local address and connect. The connection is idle until **Allow input**.
+The Devices screen follows the Mac preview's four steps: Permissions, Pair
+computers, Arrange screens and Link devices. Each step shows one primary action.
+Connection details remain optional, and Pause sharing stays accessible.
+
+Grant Linux desktop access when prompted. Export the Linux public card and import
+it into the Windows secure preview. Import Windows's card on Linux and explicitly
+approve the full SHA-256 fingerprint shown by Windows. Enter the Windows preview's
+local address on Arrange screens and choose **Connect securely**. Continue to
+Link devices and choose **Enable Linux input**, then **Start sharing** on Windows.
+Connecting and saving setup leave input paused until you enable it.
 A fresh Windows handoff is required after enablement or reconnection.
 The preview remembers the last chosen peer and address; it never saves permission
 to enable input automatically.
@@ -67,6 +73,11 @@ provided by its authorized input service, derives inclusive bounds from their
 size and clamps movement to actual regions rather than empty monitor gaps.
 The peer target remains `<approved-deviceId>:desktop`; no new shared layout or
 hello extension is required. A return handoff releases held input immediately.
+The Arrange screens diagram shows each computer as one desktop. Its left/right
+choice is a saved guide to match on Windows; it does not modify the Windows
+layout or imply control of individual monitors. Verified dimensions appear only
+after desktop access and a secure hello. Save setup retains the chosen side,
+approved peer and address without saving permission to activate input.
 
 Pause disconnects and balances held keys/buttons. Desktop permission revocation,
 input-device replacement, screen lock, sleep and application exit also stop
