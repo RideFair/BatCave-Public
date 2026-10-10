@@ -30,6 +30,9 @@ CloseApplications=yes
 RestartApplications=no
 DisableProgramGroupPage=yes
 
+[Messages]
+ErrorCloseApplications=Windows could not close an application using BatCave's files.%n%nOlder BatCave versions may still be running in the system tray after their window closes. Choose Quit BatCave from its tray menu, then select Try again.
+
 [Files]
 Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Excludes: "*.pdb,*.log,*.pfx,*.p12,*.pem,*.key,*.batcave-peer.json,identity.json,approved-peers.json,desktop-settings.json,topology.secure.json,monitor-layouts.json,*.json.new"; Flags: ignoreversion recursesubdirs createallsubdirs
 

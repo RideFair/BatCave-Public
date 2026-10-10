@@ -26,8 +26,9 @@ on Windows. The matching Mac and Linux secure transports are included in this so
 
 Pause, Escape, F12, disconnect, sleep, and session lock restore local control.
 Reconnect does not automatically resume sharing. Text clipboard sharing and
-starting at login are opt-in. Closing the window leaves the app in the tray;
-Quit exits it.
+starting at login are opt-in. Minimize the window to keep BatCave running.
+Closing the window or choosing Quit stops sharing and exits. Windows can close
+the app for an update; a cancelled update leaves sharing paused.
 
 ## Checks
 

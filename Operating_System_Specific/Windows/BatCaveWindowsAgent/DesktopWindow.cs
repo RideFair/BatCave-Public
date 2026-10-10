@@ -56,7 +56,6 @@ internal sealed class DesktopWindow : Form
     private DateTimeOffset _addressRefresh;
     private bool _addingComputer;
     private bool _windowsFileShared;
-    private bool _quitting;
     private bool _sharing;
     private volatile string? _selectedPeerId;
     private bool _refreshingPeers;
@@ -156,6 +155,7 @@ internal sealed class DesktopWindow : Form
         permissions.Controls.Add(_permissionStatus);
         permissions.Controls.Add(Body("Windows needs no extra input permission. If Windows asks about network access, allow BatCave on your private network."));
         permissions.Controls.Add(Body("Sharing starts only when you choose Start sharing. Pause sharing always returns control to this computer."));
+        permissions.Controls.Add(Body("Minimize this window to keep BatCave running. Closing it stops sharing and exits."));
         AddPage(permissions);
 
         AddPage(BuildPairingPage());
@@ -293,7 +293,9 @@ internal sealed class DesktopWindow : Form
         });
         SystemEvents.PowerModeChanged += OnPowerModeChanged; SystemEvents.SessionSwitch += OnSessionSwitch;
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
-        FormClosing += (_, e) => { if (!_quitting) { e.Cancel = true; Hide(); } };
+        // Accept Windows Restart Manager's shutdown query. WinForms waits for
+        // WM_ENDSESSION before closing; a cancelled update stays safely paused.
+        FormClosing += (_, _) => Pause("application closing");
         FormClosed += (_, _) =>
         {
             _timer.Stop(); SystemEvents.PowerModeChanged -= OnPowerModeChanged; SystemEvents.SessionSwitch -= OnSessionSwitch;
@@ -749,7 +751,7 @@ internal sealed class DesktopWindow : Form
         }
         catch (InvalidOperationException) when (IsDisposed || !IsHandleCreated) { }
     }
-    private void Quit() { _quitting = true; Close(); }
+    private void Quit() => Close();
     private void Guard(Action action)
     {
         try { action(); }

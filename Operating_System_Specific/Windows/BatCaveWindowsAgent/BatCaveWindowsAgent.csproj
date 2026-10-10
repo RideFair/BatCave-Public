@@ -7,8 +7,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>BatCave.WindowsAgent</AssemblyName>
     <ApplicationIcon>..\batcave_icon.ico</ApplicationIcon>
-    <Version>0.2.1</Version>
-    <AssemblyVersion>0.2.1.0</AssemblyVersion>
+    <Title>BatCave</Title>
+    <Product>BatCave</Product>
+    <Version>0.2.2</Version>
+    <AssemblyVersion>0.2.2.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>

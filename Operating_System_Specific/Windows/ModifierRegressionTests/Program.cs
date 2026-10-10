@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using BatCave.WindowsAgent;
@@ -16,6 +17,7 @@ internal static class ModifierRegression
         CheckSetupActions();
         Run().GetAwaiter().GetResult();
         CheckPairingUi();
+        CheckWindowShutdown();
         if (args.Length == 2 && args[0] == "--render-preview") { RenderPreview(args[1]); }
         if (args.Length == 2 && args[0] == "--render-setup") { RenderSetup(args[1]); }
     }
@@ -87,7 +89,7 @@ internal static class ModifierRegression
             using var window = new DesktopWindow(identity, approvals, directory, inspectionOnly: true);
             window.StartPosition = FormStartPosition.Manual; window.Location = new(-30000, -30000); window.Show();
             try { inspect(window, approvals, first.ExportPublicCard("Studio Mac"), second.ExportPublicCard("Laptop Mac")); }
-            finally { Call(window, "Quit"); }
+            finally { if (!window.IsDisposed) Call(window, "Quit"); }
             Require(!((LocalBridgeAgent)Get(window, "_agent")).IsHandleCreated, "inspection installs no input hooks");
         }
         finally
@@ -98,6 +100,55 @@ internal static class ModifierRegression
             Directory.Delete(directory);
         }
     }
+
+    private static void CheckWindowShutdown()
+    {
+        const uint queryEndSession = 0x0011, endSession = 0x0016, close = 0x0010;
+        var closeApp = new IntPtr(1); // ENDSESSION_CLOSEAPP: Windows Restart Manager.
+        WithPairingFixture((window, _, _, _) =>
+        {
+            var agent = PrepareSharing(window);
+            window.Close();
+            Require(window.IsDisposed && agent.IsDisposed, "closing the main window exits instead of hiding");
+            Require(!agent.IsBridgeActive, "window close stops sharing before disposing input resources");
+            Require(!((NotifyIcon)Get(window, "_tray")).Visible, "window close removes the tray icon");
+        });
+        WithPairingFixture((window, _, _, _) =>
+        {
+            var agent = PrepareSharing(window);
+            SendMessage(window.Handle, close, IntPtr.Zero, IntPtr.Zero);
+            Require(window.IsDisposed && agent.IsDisposed && !agent.IsBridgeActive, "native WM_CLOSE exits and stops sharing");
+        });
+        WithPairingFixture((window, _, _, _) =>
+        {
+            var agent = PrepareSharing(window);
+            var handle = window.Handle;
+            Require(SendMessage(handle, queryEndSession, IntPtr.Zero, closeApp) != IntPtr.Zero,
+                "Restart Manager shutdown query is accepted");
+            Require(!window.IsDisposed && window.Visible, "shutdown query waits for Windows to confirm the update");
+            Require(!agent.IsBridgeActive && !(bool)Get(window, "_sharing"), "shutdown query pauses sharing safely");
+            SendMessage(handle, endSession, IntPtr.Zero, closeApp);
+            Require(!window.IsDisposed && window.Visible, "cancelled update keeps the window available");
+            Require(!agent.IsBridgeActive, "cancelled update never resumes input automatically");
+            Require(SendMessage(handle, queryEndSession, IntPtr.Zero, closeApp) != IntPtr.Zero, "a subsequent update is accepted");
+            SendMessage(handle, endSession, new IntPtr(1), closeApp);
+            Require(window.IsDisposed && agent.IsDisposed, "confirmed Restart Manager shutdown releases the app window");
+            Require(!((NotifyIcon)Get(window, "_tray")).Visible, "confirmed update removes the tray icon");
+        });
+        Console.WriteLine("PASS: window close and native update shutdown exit cleanly; cancelled updates keep the app paused and visible.");
+
+        static LocalBridgeAgent PrepareSharing(DesktopWindow window)
+        {
+            // Synthetic active state only: inspection mode has no hooks, socket,
+            // or held keys. The real pause/close handlers perform cleanup.
+            var agent = (LocalBridgeAgent)Get(window, "_agent");
+            Set(agent, "_bridgeActive", true); Set(window, "_sharing", true);
+            return agent;
+        }
+    }
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
 
     private static void RenderSetup(string output)
     {
