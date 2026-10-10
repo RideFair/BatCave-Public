@@ -265,7 +265,12 @@ class Window(Gtk.ApplicationWindow):
         try:
             if self.input: self.input.disconnect()
         finally:
-            if self.connection: self.connection.stop()
+            if self.connection:
+                self.connection.stop()
+                # Invalidate callbacks already queued before the socket closed.
+                self.epoch = self.connection.epoch
+            else:
+                self.epoch += 1
         self.connected = False
         self.allow.set_sensitive(False)
         self.connection_label.set_text("Secure connection: disconnected")

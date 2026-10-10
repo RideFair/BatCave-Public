@@ -121,6 +121,10 @@ class CoreTests(unittest.TestCase):
         with self.assertRaises(ValueError): inbox.put(1, "message", {}, 1)
         inbox.terminal(1, "closed")
         self.assertEqual(inbox.drain(), [(1, "disconnected", "closed")])
+        inbox.put(2, "connected", {}, 32)
+        inbox.terminal(1, "previous worker closed")
+        self.assertEqual(inbox.bytes, 32)
+        self.assertEqual(inbox.drain(), [(2, "connected", {})])
 
     def test_fresh_handoff_enablement_and_cleanup(self):
         backend = Backend(); session = InputSession("linux:test", backend)

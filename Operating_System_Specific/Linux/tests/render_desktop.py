@@ -13,6 +13,7 @@ from gi.repository import Gio, GLib, Graphene, Gtk
 from batcave_linux.desktop import Application
 from batcave_linux.identity import Approvals, Identity
 from batcave_linux.storage import StateDirectory
+from batcave_linux.protocol import Bounds
 from test_core import MemoryVault
 
 root = Path(__file__).resolve().parents[1]
@@ -26,6 +27,11 @@ with tempfile.TemporaryDirectory() as directory:
     if window is None:
         raise RuntimeError("GTK application did not create a window.")
     errors = []
+    # A connected callback queued before manual stop cannot revive the UI/session.
+    old_epoch = window.epoch
+    window.inbox.put(old_epoch, "connected", Bounds(0, 0, 1920, 1080))
+    window._stop(); window._tick()
+    assert not window.connected and window.input.epoch is None
     # A FIFO must be refused without waiting for a writer or retaining an FD.
     fifo = Path(directory) / "not-a-regular-file"; os.mkfifo(fifo)
     try:

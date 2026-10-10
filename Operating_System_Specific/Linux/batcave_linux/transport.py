@@ -25,6 +25,12 @@ class Inbox:
 
     def terminal(self, epoch, reason):
         with self.lock:
+            newer = collections.deque(item for item in self.items if item[0] > epoch)
+            if newer:
+                # A previous worker must not erase a newer connection's events.
+                self.items = newer
+                self.bytes = sum(item[3] for item in newer)
+                return
             # Disconnect wins over queued input; no replay after reconnection.
             self.items.clear()
             self.bytes = 0
