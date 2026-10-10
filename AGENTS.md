@@ -12,8 +12,11 @@ and shared contracts in `Universal/`. Coordinate ownership when another contribu
 is editing the same files. Do not overwrite their work or replace an installed
 working app during development.
 
-The setup titles are Permissions, Pair computers, Arrange screens, and Link devices.
-Present one main action at a time, keep connection details optional, and use
+The app opens directly to nearby computers. Permissions, screen arrangement and
+sharing controls are optional navigation, not a mandatory numbered wizard. Keep
+the normal flow identical on Windows, Mac and Linux: select a nearby computer,
+compare the code, then explicitly link and share on both. Address discovery and
+default arrangement are automatic. Present one main action at a time and use
 BatCave as the product name. Avoid demo or trial wording. Explain the device action
 in plain language; put development details in technical docs.
 

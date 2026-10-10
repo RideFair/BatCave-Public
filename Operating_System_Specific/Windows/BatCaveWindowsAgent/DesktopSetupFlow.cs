@@ -1,8 +1,8 @@
 namespace BatCave.WindowsAgent;
 
-internal enum SetupOperation { None, Next, Export, Pair, Start, Pause }
+internal enum SetupOperation { None, Next, Pair, Start, Pause }
 internal sealed record SetupAction(string Label, SetupOperation Operation, bool Enabled = true);
-internal sealed record DesktopSetupState(bool ListenerReady, bool PeerSelected, bool Connected, bool LayoutValid, bool Sharing, bool AddingComputer = false, bool WindowsFileShared = false, bool ReceiveInput = false);
+internal sealed record DesktopSetupState(bool ListenerReady, bool PeerSelected, bool Connected, bool LayoutValid, bool Sharing, bool AddingComputer = false, bool ReceiveInput = false);
 
 internal static class DesktopSetupFlow
 {
@@ -13,8 +13,7 @@ internal static class DesktopSetupFlow
     {
         if (step < 0 || step >= Titles.Length) throw new ArgumentOutOfRangeException(nameof(step));
         if (step == 0) return new("Continue", SetupOperation.Next, state.ListenerReady);
-        if (step == 1) return state.PeerSelected && !state.AddingComputer ? new("Continue", SetupOperation.Next)
-            : state.WindowsFileShared ? new("Add computer…", SetupOperation.Pair) : new("Save Windows file…", SetupOperation.Export);
+        if (step == 1 && (!state.PeerSelected || state.AddingComputer)) return new("Link computer", SetupOperation.Pair, false);
         if (!state.PeerSelected) return new("Pair computers", SetupOperation.Pair);
         if (!state.ListenerReady || !state.Connected) return new("Waiting for other device…", SetupOperation.None, false);
         if (!state.ReceiveInput && !state.LayoutValid) return new("Choose an outside edge", SetupOperation.None, false);
@@ -24,7 +23,7 @@ internal static class DesktopSetupFlow
     }
 
     public static string Status(DesktopSetupState state) => !state.ListenerReady ? "Connection service is unavailable. Reopen BatCave."
-        : !state.PeerSelected ? "No computer added yet. Open Pair computers to get started."
+        : !state.PeerSelected ? "Looking for nearby computers running BatCave."
         : state.Connected ? state.Sharing ? "Sharing securely. Pause to return control here." : "Connected securely. Sharing is paused."
-        : "Computer approved. Use either computer’s address to connect in Pair computers.";
+        : "Waiting for your linked computer. Connection is automatic.";
 }

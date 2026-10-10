@@ -20,12 +20,17 @@ setup and secure input/recovery checks remain incomplete; see the release notes.
 
 ## Link your computers
 
-Open BatCave on both computers and follow **Permissions → Pair computers →
-Arrange screens → Link devices**. Pair computers explains how to exchange the
-connection files and compare their approval codes. Connect from one computer
-using the other's address. Choose which computer supplies the keyboard and mouse,
-arrange screens there, enable input on the receiving computer, then choose
-**Start sharing** on the source. **Pause sharing**, Escape, or F12 stops sharing.
+The updated source opens directly to nearby computers. Open BatCave on both
+computers, choose the one you want to link, compare the eight digits, and choose
+**Codes match · Link and share** on both. BatCave handles the connection and a
+default screen arrangement. **Arrange screens** is available if you want to move
+the other screen. Required system permission prompts explain what to allow.
+
+**The 0.2.x downloads above still use the earlier manual pairing flow.** Nearby
+setup is under cross-platform verification; matching new installers have not
+been released. Existing paired identities are preserved by the updated source.
+A new approval can start only the first verified connection, within 30 seconds.
+Reconnecting later stays paused until you explicitly resume sharing.
 
 Windows 0.2.3 can send or receive input; install it on both PCs for Windows-to-Windows.
 The published Mac/Linux 0.2.0 apps receive Windows input. Their source roles need

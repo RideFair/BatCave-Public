@@ -38,13 +38,85 @@ internal static class NearbyPairingChecks
 
     internal static async Task Run()
     {
-        CheckVectors(); CheckDiscovery();
+        CheckVectors(); CheckDiscovery(); CheckConsent();
         await Exchange();
         await Exchange(decline: true);
         await Exchange(expectedWrong: true);
         foreach (var field in new[] { "nonce", "name", "proof", "order", "duplicate", "session", "port" }) await Exchange(mutation: field);
         await DisconnectDuringConfirmation();
+        if (OperatingSystem.IsWindows()) await ServiceLifecycle();
         Console.WriteLine("PASS: nearby pairing vectors, RSA/ECDSA TCP exchange, matching codes, mutual approval, rejection, tampering, replay context, EOF cancellation and bounded discovery.");
+    }
+
+    private static void CheckConsent()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var consent = new InitialSharingConsent("windows:example", new string('A', 64), true, 20, now.AddSeconds(30));
+        Require(consent.Allows("windows:example", new string('A', 64), true, 21, now), "fresh explicit consent accepts its first session");
+        Require(!consent.Allows("windows:other", new string('A', 64), true, 21, now), "consent binds peer");
+        Require(!consent.Allows("windows:example", new string('B', 64), true, 21, now), "consent binds certificate");
+        Require(!consent.Allows("windows:example", new string('A', 64), false, 21, now), "consent binds role");
+        Require(!consent.Allows("windows:example", new string('A', 64), true, 20, now), "consent cannot authorize an old connection");
+        Require(!consent.Allows("windows:example", new string('A', 64), true, 22, now), "consent cannot authorize a replacement");
+        Require(!consent.Allows("windows:example", new string('A', 64), true, 21, now.AddSeconds(30)), "consent expires");
+        Require(!consent.Allows("windows:example", new string('A', 64), true, 21, now.AddSeconds(-1)), "clock rollback invalidates consent");
+    }
+
+    private static async Task ServiceLifecycle()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "BatCave-Nearby-Service-" + Guid.NewGuid().ToString("N"));
+        var aPath = Path.Combine(root, "a"); var bPath = Path.Combine(root, "b");
+        using var a = DeviceIdentityStore.OpenOrCreate(aPath); using var b = DeviceIdentityStore.OpenOrCreate(bPath);
+        try
+        {
+            var aStore = new ApprovedPeerStore(aPath); var bStore = new ApprovedPeerStore(bPath);
+            var aCard = a.ExportPublicCard("Office computer"); var bCard = b.ExportPublicCard("Laptop computer");
+            var aPrompt = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var bPrompt = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var bothComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); var completed = 0;
+            var allowA = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var allowB = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var serviceA = new NearbyPairingService(a, new(aCard, 47871), _ => true,
+                async (comparison, token) => { aPrompt.TrySetResult(comparison.Code); return await allowA.Task.WaitAsync(token); },
+                (result, token) => { token.ThrowIfCancellationRequested(); aStore.Approve(result.Peer.Card); Done(); return Task.CompletedTask; }, IPAddress.IsLoopback);
+            using var serviceB = new NearbyPairingService(b, new(bCard, 47871), _ => true,
+                async (comparison, token) => { bPrompt.TrySetResult(comparison.Code); return await allowB.Task.WaitAsync(token); },
+                (result, token) => { token.ThrowIfCancellationRequested(); bStore.Approve(result.Peer.Card); Done(); return Task.CompletedTask; }, IPAddress.IsLoopback);
+            serviceA.Start(IPAddress.Loopback, 0); serviceB.Start(IPAddress.Loopback, 0);
+            serviceA.OpenWindow(); serviceB.OpenWindow();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var link = serviceA.LinkAsync(new(b.DeviceId, "Laptop computer", "windows", b.Fingerprint, IPAddress.Loopback,
+                47871, serviceB.ListeningPort, true, DateTimeOffset.UtcNow));
+            Require(await aPrompt.Task.WaitAsync(timeout.Token) == await bPrompt.Task.WaitAsync(timeout.Token), "service code agrees");
+            Require(aStore.Peers.Length == 0 && bStore.Peers.Length == 0, "showing a request does not persist trust");
+            allowA.TrySetResult(true);
+            await Task.Delay(50, timeout.Token);
+            Require(aStore.Peers.Length == 0 && bStore.Peers.Length == 0, "one local approval does not persist either pin");
+            allowB.TrySetResult(true);
+            await link.WaitAsync(timeout.Token); await bothComplete.Task.WaitAsync(timeout.Token);
+            Require(aStore.Peers.Single().DeviceId == b.DeviceId && bStore.Peers.Single().DeviceId == a.DeviceId, "mutual approval stores existing protected identities");
+            var port = serviceB.ListeningPort; serviceB.CloseWindow();
+            using var refused = new TcpClient();
+            try { await refused.ConnectAsync(IPAddress.Loopback, port, timeout.Token); throw new Exception("Closed pairing window still listens."); }
+            catch (SocketException) { }
+
+            using var inputA = new LanBridgePeer(a, () => aStore.Peers); using var inputB = new LanBridgePeer(b, () => bStore.Peers);
+            inputA.UpdateLocalBounds(new(0, 0, 1920, 1080)); inputB.UpdateLocalBounds(new(0, 0, 1920, 1080));
+            await inputB.StartListeningAsync(0);
+            var listener = (TcpListener)typeof(LanBridgePeer).GetField("_listener", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(inputB)!;
+            await inputA.ConnectSecureAsync("127.0.0.1", aStore.Peers.Single(), ((IPEndPoint)listener.LocalEndpoint).Port, timeout.Token);
+            while (!inputA.HasPeer || !inputB.HasPeer) await Task.Delay(10, timeout.Token);
+            Require(inputA.CurrentPeerDeviceId == b.DeviceId && inputB.CurrentPeerDeviceId == a.DeviceId, "nearby-approved identities authenticate on unchanged pinned mutual TLS");
+            Console.WriteLine("PASS: real pairing services persist nothing before both approvals; closed window unbinds; resulting protected identities authenticate input TLS without input hooks.");
+
+            void Done() { if (Interlocked.Increment(ref completed) == 2) bothComplete.TrySetResult(); }
+        }
+        finally
+        {
+            a.DeleteIdentity(aPath); b.DeleteIdentity(bPath);
+            File.Delete(Path.Combine(aPath, "approved-peers.json")); File.Delete(Path.Combine(bPath, "approved-peers.json"));
+            Directory.Delete(aPath); Directory.Delete(bPath); Directory.Delete(root);
+        }
     }
 
     private static X509Certificate2 Certificate(bool elliptic)
@@ -108,6 +180,32 @@ internal static class NearbyPairingChecks
         foreach (var address in new[] { "0.0.0.0", "127.0.0.1", "255.255.255.255", "239.255.47.87" })
             Require(!NearbyDiscovery.EligibleAddress(IPAddress.Parse(address)), "invalid discovery source rejected");
         try { NearbyDiscovery.ReadAnnouncement(new byte[1025], peer.Address, now); throw new Exception("Large discovery accepted."); } catch (InvalidDataException) { }
+    }
+
+    internal static async Task MulticastSmoke()
+    {
+        if (NearbyDiscovery.Interfaces().Length == 0) throw new InvalidOperationException("No eligible LAN interface for a multicast check.");
+        using var certificate = Certificate(true);
+        var a = Describe(certificate, "windows:multicast-fixture-a", "Synthetic discovery A", 47871).Card;
+        var b = Describe(certificate, "windows:multicast-fixture-b", "Synthetic discovery B", 47871).Card;
+        using var reservation = new UdpClient(new IPEndPoint(IPAddress.Any, 0));
+        var port = ((IPEndPoint)reservation.Client.LocalEndPoint!).Port; reservation.Dispose();
+        var group = IPAddress.Parse("239.255.47.88"); // Separate test group/port; production apps do not see these fixtures.
+        using var first = new NearbyDiscovery(a.DeviceId, () => NearbyDiscovery.Announcement(a, 47871, 47873, false));
+        using var second = new NearbyDiscovery(b.DeviceId, () => NearbyDiscovery.Announcement(b, 47871, 47873, false));
+        first.Start(port, group, loopback: true); second.Start(port, group, loopback: true);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        try
+        {
+            while (!first.Computers.Any(c => c.DeviceId == b.DeviceId) || !second.Computers.Any(c => c.DeviceId == a.DeviceId))
+                await Task.Delay(50, timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            throw new InvalidOperationException($"Multicast check timed out: first={first.Computers.Length}, second={second.Computers.Length}, firstError={first.Error ?? "none"}, secondError={second.Error ?? "none"}, received={first.ReceivedPackets}/{second.ReceivedPackets}, offLan={first.OffLanPackets}/{second.OffLanPackets}, invalid={first.InvalidPackets}/{second.InvalidPackets}.");
+        }
+        Require(first.Computers.All(c => c.DeviceId != a.DeviceId) && second.Computers.All(c => c.DeviceId != b.DeviceId), "own multicast packets ignored");
+        Console.WriteLine("PASS: actual Windows multicast sockets discover each other on a separate fixture group and ephemeral port; no input listener or installed profile opened.");
     }
 
     private static async Task Exchange(bool decline = false, bool expectedWrong = false, string? mutation = null)

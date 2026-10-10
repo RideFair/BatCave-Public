@@ -17,6 +17,7 @@ internal static partial class ModifierRegression
         CheckSetupActions();
         Run().GetAwaiter().GetResult();
         CheckPairingUi();
+        CheckNearbyCancellation();
         CheckWindowShutdown();
         CheckReceivingInput();
         CheckQueuedInput();
@@ -34,16 +35,16 @@ internal static partial class ModifierRegression
             {
                 var action = DesktopSetupFlow.Action(step, state);
                 if (action.Operation == SetupOperation.Start)
-                    Require(step == 3 && state.ListenerReady && state.PeerSelected && state.Connected && state.LayoutValid && !state.Sharing, "setup starts only a ready approved connection after explicit final-page action");
-                if (step < 3) Require(action.Operation is not SetupOperation.Start, "navigation never starts sharing");
+                    Require(step is 1 or 3 && state.ListenerReady && state.PeerSelected && state.Connected && state.LayoutValid && !state.Sharing, "setup starts only a ready approved connection after explicit final-page action");
+                if (step is 0 or 2) Require(action.Operation is not SetupOperation.Start, "optional setup navigation never starts sharing");
             }
         }
         Require(DesktopSetupFlow.Action(3, new(true, true, false, true, false)).Enabled == false, "lost connection cannot start through saved setup");
         Require(DesktopSetupFlow.Action(3, new(true, true, true, true, false)).Label == "Start sharing", "fresh reconnection needs an explicit start");
         Require(DesktopSetupFlow.Action(3, new(true, true, true, true, true)).Operation == SetupOperation.Pause, "active sharing offers pause");
-        Require(DesktopSetupFlow.Action(1, new(true, true, false, true, false, true, true)).Operation == SetupOperation.Pair, "adding a second computer imports rather than skipping the guide");
-        Require(DesktopSetupFlow.Action(1, new(true, false, false, false, false)).Operation == SetupOperation.Export, "first-computer setup begins with the PC file");
-        Require(DesktopSetupFlow.Status(new(true, false, false, false, false)).StartsWith("No computer added"), "empty setup never claims to be ready");
+        Require(DesktopSetupFlow.Action(1, new(true, true, false, true, false, true)).Operation == SetupOperation.Pair, "adding a second computer returns to nearby selection");
+        Require(DesktopSetupFlow.Action(1, new(true, false, false, false, false)).Operation == SetupOperation.Pair, "first-computer setup begins with nearby selection");
+        Require(DesktopSetupFlow.Status(new(true, false, false, false, false)).StartsWith("Looking for nearby"), "empty setup never claims to be ready");
         Console.WriteLine("PASS: device-linking navigation preserves explicit input activation.");
     }
 
@@ -54,18 +55,17 @@ internal static partial class ModifierRegression
             window.ShowStep(1); Application.DoEvents();
             Require(!((ComboBox)Get(window, "_peers")).Visible, "empty peer dropdown is hidden");
             Require(!((Control)Get(window, "_removePeer")).Visible, "empty state has no removal action");
-            Require(((Control)Get(window, "_fileGuide")).Visible, "first-computer file exchange guide is visible");
-            Require(((Button)Get(window, "_start")).Text == "Save Windows file…", "empty setup begins with the PC file");
-            ((Button)Get(window, "_skipExport")).PerformClick(); Application.DoEvents();
-            Require(((Button)Get(window, "_start")).Text == "Add computer…" && ((Control)Get(window, "_receiveInstructions")).Visible,
-                "existing file advances to the receiving instruction and import action");
-            Require(((Control)Get(window, "_receiveTitle")).Top < ((Control)Get(window, "_receiveInstructions")).Top,
-                "receiving instruction heading remains before its body after changing stages");
+            Require(((Control)Get(window, "_nearbyPanel")).Visible, "first-computer nearby view is visible");
+            Require(((Button)Get(window, "_start")).Text == "Link computer" && !((Button)Get(window, "_start")).Enabled, "empty nearby state cannot link");
+            var nearby = (ListBox)Get(window, "_nearbyList");
+            nearby.Items.Add(new NearbyComputer("linux:synthetic", "Laptop computer", "linux", new string('A', 64), IPAddress.Parse("192.0.2.20"), 47870, 47873, true, DateTimeOffset.UtcNow));
+            nearby.SelectedIndex = 0; Application.DoEvents();
+            Require(((Button)Get(window, "_start")).Enabled, "selecting an available nearby computer enables linking");
             Require(!approvals.Peers.Any(), "navigation never approves a computer");
             Call(window, "ApplyApproval", first); Application.DoEvents();
             Require((string)Get(window, "_selectedPeerId") == first.DeviceId, "first approved computer is selected");
             Require(!((ComboBox)Get(window, "_peers")).Visible, "single computer needs no selector");
-            Require(((Control)Get(window, "_connectPanel")).Visible, "approval reveals the address and receiving-device connection instructions");
+            Require(!((Control)Get(window, "_nearbyPanel")).Visible && ((Label)Get(window, "_pairExplanation")).Text.Contains("automatically"), "approval waits for automatic connection without address entry");
             Call(window, "ApplyApproval", second); Application.DoEvents();
             Require((string)Get(window, "_selectedPeerId") == second.DeviceId, "new approval replaces old selection");
             Require(((ComboBox)Get(window, "_peers")).Visible, "multiple approved computers have a selector");
@@ -73,7 +73,7 @@ internal static partial class ModifierRegression
             Call(window, "Unpair"); Application.DoEvents();
             Require((string)Get(window, "_selectedPeerId") == first.DeviceId && approvals.Peers.Length == 1, "removing one selects the remaining approved computer");
             Call(window, "Unpair"); Application.DoEvents();
-            Require(((Control)Get(window, "_fileGuide")).Visible && !((ComboBox)Get(window, "_peers")).Visible, "removing last computer restores the guide");
+            Require(((Control)Get(window, "_nearbyPanel")).Visible && !((ComboBox)Get(window, "_peers")).Visible, "removing last computer restores nearby discovery");
             Require(!((LocalBridgeAgent)Get(window, "_agent")).IsBridgeActive, "pairing actions never start input");
         });
         Console.WriteLine("PASS: first-computer instructions, approved selection, second approval and removal preserve explicit activation.");
@@ -188,20 +188,17 @@ internal static partial class ModifierRegression
             {
                 if (small) window.Size = window.MinimumSize;
                 window.ShowStep(1); Application.DoEvents();
-                Set(window, "_windowsFileShared", false); Call(window, "UpdateSetup");
-                var platforms = (ComboBox)Get(window, "_platform");
-                for (var platform = 0; platform < 3; platform++)
-                {
-                    platforms.SelectedIndex = platform; Application.DoEvents();
-                    CaptureWindow(window, output, "platform-" + platform + (small ? "-small" : ""));
-                }
-                Set(window, "_windowsFileShared", true); Call(window, "UpdateSetup"); Application.DoEvents();
-                CaptureWindow(window, output, "receive" + (small ? "-small" : ""));
+                var nearby = (ListBox)Get(window, "_nearbyList"); nearby.Items.Clear();
+                foreach (var platform in new[] { "windows", "macos", "linux" })
+                    nearby.Items.Add(new NearbyComputer(platform + ":synthetic", platform == "windows" ? "Office PC" : platform == "macos" ? "Studio Mac" : "Linux laptop", platform, new string('A', 64), IPAddress.Parse("192.0.2.20"), 47871, 47873, true, DateTimeOffset.UtcNow));
+                nearby.SelectedIndex = 1; Call(window, "UpdateSetup"); Application.DoEvents();
+                CaptureWindow(window, output, "nearby-computers" + (small ? "-small" : ""));
+                Set(window, "_comparison", new NearbyPairingProtocol.Confirmation(new(first, 47871), "1234 5678", true));
+                Set(window, "_comparisonAnswer", new TaskCompletionSource<bool>()); Call(window, "UpdateSetup"); Application.DoEvents();
+                CaptureWindow(window, output, "approve-computer" + (small ? "-small" : ""));
+                Call(window, "ClearComparison");
                 Call(window, "ApplyApproval", first); Application.DoEvents();
                 CaptureWindow(window, output, "paired" + (small ? "-small" : ""));
-                Call(window, "SetConnectionDirection", true); Application.DoEvents();
-                CaptureWindow(window, output, "connect-outgoing" + (small ? "-small" : ""));
-                Call(window, "SetConnectionDirection", false);
                 var lan = (LanBridgePeer)Get(window, "_lan");
                 // Only a UI fixture: no socket, TLS session, listener or input hooks.
                 Set(lan, "_writer", new StreamWriter(Stream.Null)); Set(lan, "_peerDeviceId", first.DeviceId);
