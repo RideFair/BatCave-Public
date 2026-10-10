@@ -19,6 +19,14 @@ configuration under `BatCave/SecurePreview`, and refuse to overwrite preserved
 stable and development bundles. Ad-hoc signing is not Developer ID signing or
 notarization and is unsuitable for a public installer release.
 
+After building, `bash Scripts/install_setup_preview.sh --validate-only` checks
+the installation plan. Run it without `--validate-only` to install a versioned
+preview in your user Applications folder and create the native desktop alias
+`BatCave — Latest`. It preserves older app bundles and refuses to replace
+unrelated desktop items. See [the installation guide](Scripts/INSTALL_SETUP_PREVIEW.md)
+for source selection and disposable installer checks. The installer does not
+open the app or change permissions, devices, settings, or login items.
+
 Input capture and injection require Input Monitoring and Accessibility permission
 for the development app or terminal in System Settings. Grant these permissions
 only to builds you trust.
