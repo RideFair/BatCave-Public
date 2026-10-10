@@ -9,7 +9,7 @@ sh "$root/scripts/build.sh"
 version=0.2.0~preview.1
 architecture=$(dpkg --print-architecture)
 output="$root/.build"
-stage=$(mktemp -d "$output/package.XXXXXXXX")
+stage=$(mktemp -d "${TMPDIR:-/tmp}/batcave-package.XXXXXXXX")
 # Use a fresh stage; no wildcard deletion and no user profile is copied.
 mkdir -p "$stage/DEBIAN" "$stage/usr/lib/batcave-linux-preview/native" "$stage/usr/bin" "$stage/usr/share/applications" "$stage/usr/share/doc/batcave-linux-preview"
 cat > "$stage/DEBIAN/control" <<EOF
