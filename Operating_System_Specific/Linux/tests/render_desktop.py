@@ -112,6 +112,14 @@ with tempfile.TemporaryDirectory() as directory:
             assert not window.approvals.cards
             assert window.permission_label.get_text() == "Desktop access: not granted"
             # The fixed navigation and primary action remain inside the window.
+            if window.get_width() > (880 if len(sys.argv) > 3 else 1000):
+                def measure(widget, path=""):
+                    size = widget.measure(Gtk.Orientation.HORIZONTAL, -1)[:2]
+                    if size[0] > 500: print(path, type(widget).__name__, widget.get_css_classes(), size)
+                    child = widget.get_first_child(); index = 0
+                    while child:
+                        measure(child, path + "/" + str(index)); child = child.get_next_sibling(); index += 1
+                measure(window)
             assert window.get_width() <= (880 if len(sys.argv) > 3 else 1000), f"Unexpected width: {window.get_width()}"
             assert window.get_height() <= (668 if len(sys.argv) > 3 else 788), f"Unexpected height: {window.get_height()}"
             paintable = Gtk.WidgetPaintable.new(window)

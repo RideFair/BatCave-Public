@@ -39,6 +39,6 @@ def primary_action(step, state):
         if state.permission_pending: return Action("Waiting for permission…", "none", False)
         return Action("Grant access", "permission", state.desktop_ready)
     if not state.peer_selected: return Action("Pair computers", "pair")
-    if state.connected: return Action("Continue", "next") if step == 2 else Action("Enable Linux input", "start")
+    if state.connected: return Action("Link devices", "next") if step == 2 else Action("Enable Linux input", "start")
     if state.connecting: return Action("Linking devices…", "none", False)
     return Action("Connect securely" if step == 2 else "Reconnect", "connect", state.address_valid)
