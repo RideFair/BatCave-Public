@@ -33,15 +33,16 @@ sudo apt install build-essential pkg-config libei-dev libeis-dev python3 python3
 cd Operating_System_Specific/Linux
 sh scripts/test.sh
 sh scripts/package.sh
-sudo apt install ./.build/batcave-linux-preview_0.2.0~preview.3_amd64.deb
+sudo apt install ./.build/BatCave-Linux-0.2.0-amd64.deb
 ```
 
 Packaging requires a clean committed source tree. It creates a fresh stage,
 copies only tracked application source, and builds a Debian package for the
 current architecture. It appears in the application launcher as **BatCave**.
-The existing `batcave-linux-preview` package and command names remain for upgrade
-compatibility. Installing it upgrades that package, separate from other BatCave
-installations. Per-user state stays under
+App and Debian package version are **0.2.0**. The existing `batcave-linux-preview`
+package and command names remain for upgrade compatibility. Version 0.2.0 sorts
+above prior prerelease versions in Debian. Installing it upgrades that package,
+separate from other BatCave installations. Per-user state stays under
 `$XDG_DATA_HOME/batcave/secure-preview`, defaulting to
 `~/.local/share/batcave/secure-preview`. Removal leaves identity and approvals
 available for a later reinstall; it does not reset trusted peers silently.

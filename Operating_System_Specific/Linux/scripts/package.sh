@@ -6,8 +6,9 @@ if test -n "$(git -C "$root" status --porcelain)"; then
     exit 1
 fi
 sh "$root/scripts/build.sh"
-version=0.2.0~preview.3
+version=0.2.0
 architecture=$(dpkg --print-architecture)
+filename="BatCave-Linux-${version}-${architecture}.deb"
 output="$root/.build"
 stage=$(mktemp -d "${TMPDIR:-/tmp}/batcave-package.XXXXXXXX")
 # Use a fresh stage; no wildcard deletion and no user profile is copied.
@@ -42,6 +43,6 @@ find "$stage" -type d -exec chmod 755 -- {} +
 find "$stage/usr/lib" -type f -exec chmod 644 -- {} +
 SOURCE_DATE_EPOCH=$(git -C "$root" log -1 --format=%ct)
 export SOURCE_DATE_EPOCH
-dpkg-deb --root-owner-group --build "$stage" "$output/batcave-linux-preview_${version}_${architecture}.deb"
-(cd "$output" && sha256sum "batcave-linux-preview_${version}_${architecture}.deb" > SHA256SUMS)
+dpkg-deb --root-owner-group --build "$stage" "$output/$filename"
+(cd "$output" && sha256sum "$filename" > SHA256SUMS)
 printf 'Package built; it has not been installed or published as a release.\n'
