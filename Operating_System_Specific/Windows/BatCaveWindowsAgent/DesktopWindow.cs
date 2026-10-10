@@ -273,19 +273,26 @@ internal sealed partial class DesktopWindow : Form
             _loadingLayout = true; _side.SelectedIndex = (int)side; _alignment.Value = alignment; _loadingLayout = false; LayoutEdited();
         };
         _start.Click += (_, _) => Guard(ActivatePrimary);
-        _lan.PeerHello += hello => PostUi(() =>
+        _lan.PeerHello += hello =>
         {
-            var consent = Interlocked.Exchange(ref _initialSharingConsent, null);
-            if (hello.DeviceId == _selectedPeerId && _lan.HasPeer && _lan.CurrentPeerDeviceId == hello.DeviceId)
+            var session = _lan.SessionGeneration;
+            PostUi(() => _lan.TryWithPeerSession(session, () =>
             {
-                var session = _lan.SessionGeneration;
+                if (hello.DeviceId != _selectedPeerId || _lan.CurrentPeerDeviceId != hello.DeviceId) return;
+                var consent = Interlocked.Exchange(ref _initialSharingConsent, null);
                 var card = (_peers.SelectedItem as PeerItem)?.Card;
-                Pause("screen geometry received"); _hello = hello; SaveSettings(); RefreshLayout();
+                Pause("screen geometry received"); _hello = hello;
+                if (_lan.VerifiedReachability is { } reachable)
+                {
+                    _host.Text = reachable.Address.ToString();
+                    if (reachable.InputPort is { } inputPort) _inputPort = inputPort;
+                }
+                SaveSettings(); RefreshLayout();
                 if (!_inspectionOnly && !_reconnectSuspended && card is not null
                     && consent?.Allows(card.DeviceId, card.CertificateSha256, ReceiveInput, session, DateTimeOffset.UtcNow) == true)
                     Guard(() => StartApprovedSharing(session));
-            }
-        });
+            }));
+        };
         _lan.PeerDisconnected += _ =>
         {
             Interlocked.Exchange(ref _initialSharingConsent, null);
@@ -344,6 +351,7 @@ internal sealed partial class DesktopWindow : Form
     private void CancelConnect()
     {
         _connectWanted = false;
+        _connectionCandidate = null;
         _connectCancellation?.Cancel();
     }
     private void LoadConnectionSettings()
@@ -363,7 +371,7 @@ internal sealed partial class DesktopWindow : Form
     private async Task ConnectPeerAsync()
     {
         if (_inspectionOnly || _reconnectSuspended || _connecting || _lan.HasPeer || _peers.SelectedItem is not PeerItem selected) return;
-        var host = _host.Text.Trim();
+        var (host, port) = ConnectionTarget(selected.Card);
         if (host.Length == 0 || host.Length > 253 || Uri.CheckHostName(host) == UriHostNameType.Unknown)
         { _connectWanted = false; Notice("Looking for your computer. Keep BatCave open on both devices."); return; }
         var peerId = selected.Card.DeviceId;
@@ -373,7 +381,7 @@ internal sealed partial class DesktopWindow : Form
         {
             UpdateSetup();
             Notice("Connecting securely… Keep BatCave open on the other computer.");
-            await _lan.ConnectSecureAsync(host, new ApprovedPeer(peerId, selected.Card.CertificateSha256), _inputPort, cancellationToken: attempt.Token);
+            await _lan.ConnectSecureAsync(host, new ApprovedPeer(peerId, selected.Card.CertificateSha256), port, cancellationToken: attempt.Token);
             if (!IsDisposed && peerId == _selectedPeerId && !attempt.IsCancellationRequested)
                 Notice("Checking the approved computer’s identity…");
         }
@@ -466,7 +474,7 @@ internal sealed partial class DesktopWindow : Form
     private void StartApprovedSharing(long session)
     {
         if (!_lan.HasPeer || _lan.SessionGeneration != session || _reconnectSuspended) return;
-        if (ReceiveInput) { _agent.EnableReceiving(); return; }
+        if (ReceiveInput) { _agent.EnableReceiving(session); return; }
         var agents = System.Diagnostics.Process.GetProcessesByName("BatCave.WindowsAgent");
         try
         {
@@ -475,7 +483,7 @@ internal sealed partial class DesktopWindow : Form
         }
         finally { foreach (var process in agents) process.Dispose(); }
         SaveLayout();
-        if (_lan.HasPeer && _lan.SessionGeneration == session) _agent.PostStartPersistentHandoff();
+        _agent.PostStartPersistentHandoff(session);
     }
     private void Notice(string text) { _notice = text; _noticeUntil = DateTimeOffset.UtcNow.AddSeconds(12); _status.Text = text; }
 

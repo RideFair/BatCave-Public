@@ -150,16 +150,18 @@ internal sealed class LocalBridgeAgent : Form
         }
     }
 
-    public void PostStartPersistentHandoff()
+    public void PostStartPersistentHandoff(long? expectedSession = null)
     {
         if (!IsDisposed)
         {
             var generation = Interlocked.Read(ref _inputGeneration);
-            var session = _lan.SessionGeneration;
+            var session = expectedSession ?? _lan.SessionGeneration;
             BeginInvoke((Action)(() =>
             {
-                if (_lan.HasPeer && _lan.SessionGeneration == session && generation == Interlocked.Read(ref _inputGeneration))
-                { StartBridge(null, handoffTest: true); }
+                _lan.TryWithPeerSession(session, () =>
+                {
+                    if (!IsDisposed && generation == Interlocked.Read(ref _inputGeneration)) StartBridge(null, handoffTest: true);
+                });
             }));
         }
     }
@@ -424,8 +426,11 @@ internal sealed class LocalBridgeAgent : Form
             {
                 try
                 {
-                    if (!IsDisposed && generation == Interlocked.Read(ref _inputGeneration)
-                        && _lan.HasPeer && _lan.SessionGeneration == session && _lan.CurrentPeerDeviceId == source) action();
+                    _lan.TryWithPeerSession(session, () =>
+                    {
+                        if (!IsDisposed && generation == Interlocked.Read(ref _inputGeneration)
+                            && _lan.CurrentPeerDeviceId == source) action();
+                    });
                 }
                 catch (Exception)
                 {
@@ -440,12 +445,16 @@ internal sealed class LocalBridgeAgent : Form
         { Interlocked.Decrement(ref _pendingRemoteActions); Interlocked.Add(ref _pendingRemoteBytes, -bytes); }
     }
 
-    internal void EnableReceiving()
+    internal void EnableReceiving(long? expectedSession = null)
     {
-        StopSharingNow("input role changed");
-        if (!_lan.HasPeer || _lan.CurrentPeerDeviceId is not { } peer || !_lan.IsSecure)
-            throw new InvalidOperationException("Connect to an approved computer first.");
-        _receiver.Enable(peer, _lan.SessionGeneration, GetVirtualDesktopBounds());
+        var session = expectedSession ?? _lan.SessionGeneration;
+        _lan.TryWithPeerSession(session, () =>
+        {
+            if (!_lan.IsSecure) throw new InvalidOperationException("Connect to an approved computer first.");
+            StopSharingNow("input role changed");
+            if (_lan.SessionGeneration == session && _lan.CurrentPeerDeviceId is { } peer)
+                _receiver.Enable(peer, session, GetVirtualDesktopBounds());
+        });
     }
 
     internal void StopSharingNow(string reason)

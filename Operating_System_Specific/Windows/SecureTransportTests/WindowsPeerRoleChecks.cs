@@ -47,6 +47,10 @@ internal static class WindowsPeerRoleChecks
             await b.ConnectSecureAsync("127.0.0.1", aPin, port);
             await Until(() => a.HasPeer && b.HasPeer, "two Windows identities authenticate using the real secure connector/listener");
             Require(a.CurrentPeerDeviceId == bIdentity.DeviceId && b.CurrentPeerDeviceId == aIdentity.DeviceId, "hello IDs are certificate-bound in both directions");
+            Require(b.VerifiedReachability is { } destination && destination.Address.Equals(IPAddress.Loopback) && destination.InputPort == port,
+                "outgoing pinned hello proves the connected address and listening port");
+            Require(a.VerifiedReachability is { } source && source.Address.Equals(IPAddress.Loopback) && source.InputPort is null,
+                "incoming pinned hello never mistakes an ephemeral source port for a listening port");
 
             await Handoff(a, b.LocalDeviceId); a.PublishKeyInput(65, 30, false, false, "a"); await a.FlushAsync();
             await Until(() => { lock (gate) return messagesB >= 2; }, "pre-enable packets arrived");
@@ -78,6 +82,7 @@ internal static class WindowsPeerRoleChecks
             approvedB = [];
             b.DisconnectUnapprovedPeer();
             await Until(() => !a.HasPeer && !b.HasPeer, "revoking approval disconnects both Windows peers");
+            Require(a.VerifiedReachability is null && b.VerifiedReachability is null, "disconnected reachability cannot be saved as current");
             // HasPeer becomes false before the disconnect callback runs.
             await Until(() => { lock (gate) return !receiveA.Enabled && !receiveB.Enabled
                 && sinkA.Events.Contains("key:162:True") && sinkA.Events.Contains("button:right:False"); },
