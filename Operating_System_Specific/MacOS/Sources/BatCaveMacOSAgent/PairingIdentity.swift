@@ -91,13 +91,13 @@ final class PairingIdentity: @unchecked Sendable {
         }
         let deviceId = "macos:" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let tag = Data(deviceId.utf8)
-        // Legacy macOS Keychain supports this unsigned local preview without
+        // Legacy macOS Keychain supports this ad-hoc signed app without
         // fabricated access-group entitlements. Distribution signing is a gate.
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
             kSecPrivateKeyAttrs as String: [kSecAttrIsPermanent as String: true,
-                kSecAttrApplicationTag as String: tag, kSecAttrLabel as String: "BatCave Preview device identity",
+                kSecAttrApplicationTag as String: tag, kSecAttrLabel as String: "BatCave device identity",
                 kSecAttrIsExtractable as String: false]
         ]
         var error: Unmanaged<CFError>?
@@ -110,7 +110,7 @@ final class PairingIdentity: @unchecked Sendable {
             guard let cert = SecCertificateCreateWithData(nil, der as CFData) else { throw PairingError("Could not create the device certificate.") }
             certificate = cert
             let add = SecItemAdd([kSecClass: kSecClassCertificate, kSecValueRef: cert,
-                kSecAttrLabel: "BatCave Preview " + deviceId] as CFDictionary, nil)
+                kSecAttrLabel: "BatCave " + deviceId] as CFDictionary, nil)
             guard add == errSecSuccess else { throw PairingError("Could not save the device certificate (\(add)).") }
             var identity: SecIdentity?
             let result = SecIdentityCreateWithCertificate(nil, cert, &identity)

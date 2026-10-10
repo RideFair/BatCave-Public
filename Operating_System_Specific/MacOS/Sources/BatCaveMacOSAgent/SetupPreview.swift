@@ -4,7 +4,7 @@ import SwiftUI
 import ServiceManagement
 
 func setupPreviewRequested() -> Bool {
-    CommandLine.arguments.contains("--setup-preview") || Bundle.main.object(forInfoDictionaryKey: "BatCaveSetupPreview") as? Bool == true
+    CommandLine.arguments.contains("--setup") || CommandLine.arguments.contains("--setup-preview") || Bundle.main.object(forInfoDictionaryKey: "BatCaveSetupPreview") as? Bool == true
 }
 
 private struct PreviewProfile: Codable {

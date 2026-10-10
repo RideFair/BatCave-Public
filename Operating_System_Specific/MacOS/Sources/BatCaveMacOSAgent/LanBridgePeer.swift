@@ -225,7 +225,7 @@ final class LanBridgePeer: @unchecked Sendable {
     }
 
     func startListening(port: UInt16 = LanBridgePeer.defaultPort) {
-        emit("Network listeners are disabled in the Mac preview; use the approved TLS connector.")
+        emit("Network listeners are disabled; use the approved TLS connector.")
     }
 
     func connect(host: String, port: UInt16 = LanBridgePeer.defaultPort, automaticallyReconnect: Bool = false) {

@@ -7,14 +7,14 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 Install a built BatCave without opening it.
 
 Usage: bash Scripts/install_setup_preview.sh [options]
-  --source APP       Absolute path to the signed setup preview .app.
+  --source APP       Absolute path to the signed BatCave .app.
                      Default: Build/SetupPreview/BatCave.app.
   --user-home DIR    Absolute home directory; defaults to the current user's home.
                      Intended for isolated installer smoke checks.
   --validate-only    Check the bundle and installation plan without writing files.
   --help            Show this help.
 
-The app is installed as ~/Applications/BatCave Preview-<version>.app.
+The app is installed as ~/Applications/BatCave-<version>.app.
 Desktop/BatCave — Latest is a native Finder alias. Existing unrelated desktop
 items and different same-version bundles are preserved and cause a refusal.
 No app is launched and no permissions, settings, devices or login items change.

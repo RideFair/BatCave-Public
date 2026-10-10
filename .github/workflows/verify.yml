@@ -70,10 +70,10 @@ jobs:
         run: bash Operating_System_Specific/MacOS/Scripts/build_setup_preview.sh
       - name: Verify versioned installation and desktop alias preservation
         run: python3 Operating_System_Specific/MacOS/Scripts/test_setup_preview_install.py
-      - name: Upload Mac test installer and manifest
+      - name: Upload Mac installer and manifest
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: macos-setup-preview-${{ runner.arch }}
+          name: BatCave-macOS-${{ runner.arch }}
           path: Operating_System_Specific/MacOS/Build/SetupPreview/Packages/*
           if-no-files-found: error
           retention-days: 14
