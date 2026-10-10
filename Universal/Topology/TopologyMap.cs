@@ -200,6 +200,7 @@ internal sealed class TopologyMap
         {
             return Array.Empty<TopologyDisplay>();
         }
+        if (displaysElement.GetArrayLength() > 64) throw new InvalidDataException("Too many topology displays.");
 
         var displays = new List<TopologyDisplay>();
         foreach (var display in displaysElement.EnumerateArray())
@@ -231,6 +232,7 @@ internal sealed class TopologyMap
         {
             return Array.Empty<MaterializedLink>();
         }
+        if (linksElement.GetArrayLength() > 128) throw new InvalidDataException("Too many topology links.");
 
         var links = new List<MaterializedLink>();
         foreach (var link in linksElement.EnumerateArray())
@@ -251,7 +253,7 @@ internal sealed class TopologyMap
                 throw new InvalidDataException("Topology links must connect different devices.");
             links.Add(
                 new MaterializedLink(
-                    ReadString(link, "id"),
+                    ReadRequiredString(link, "id"),
                     MaterializedSide.Create(fromStart, fromEnd, displays),
                     MaterializedSide.Create(toStart, toEnd, displays)));
         }
@@ -394,8 +396,10 @@ internal sealed class TopologyMap
 
     private static string ReadRequiredString(JsonElement element, string propertyName)
     {
-        var value = ReadString(element, propertyName);
-        if (string.IsNullOrWhiteSpace(value))
+        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException($"Missing required topology string: {propertyName}");
+        var value = property.GetString()!;
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 256)
         {
             throw new InvalidOperationException($"Missing required topology property: {propertyName}");
         }
@@ -412,16 +416,16 @@ internal sealed class TopologyMap
 
     private static int ReadInt(JsonElement element, string propertyName)
     {
-        return element.TryGetProperty(propertyName, out var property) && property.TryGetInt32(out var value)
-            ? value
-            : 0;
+        if (element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var value))
+            return value;
+        throw new InvalidDataException($"Missing required topology integer: {propertyName}");
     }
 
     private static double ReadDouble(JsonElement element, string propertyName)
     {
-        return element.TryGetProperty(propertyName, out var property) && property.TryGetDouble(out var value)
-            ? value
-            : 0;
+        if (element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.Number && property.TryGetDouble(out var value))
+            return value;
+        throw new InvalidDataException($"Missing required topology number: {propertyName}");
     }
 }
 

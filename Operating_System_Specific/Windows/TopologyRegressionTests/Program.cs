@@ -68,6 +68,9 @@ try
         n => n["links"]![0]!["from"]!["start"]!["position"] = 2,
         n => n["links"]![0]!["from"]!["start"]!["edge"] = "invalid",
         n => n["links"]![0]!["from"]!["start"]!["displayId"] = "unknown",
+        n => n["links"]![0]!["from"]!["start"]!.AsObject().Remove("position"),
+        n => n["displays"]![0]!["bounds"]!.AsObject().Remove("top"),
+        n => n["displays"]![0]!["deviceId"] = 3,
         n => n["links"]![0]!["from"]!["end"] = n["links"]![0]!["from"]!["start"]!.DeepClone()
     })
     {
