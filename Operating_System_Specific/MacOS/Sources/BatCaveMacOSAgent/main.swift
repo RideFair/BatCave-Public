@@ -1,16 +1,19 @@
 import ApplicationServices
 @preconcurrency import AppKit
 import Dispatch
+import Darwin
 import Foundation
 
-private let batCaveEventMarker: Int64 = 0x4261_7443_6176_6504
-private let sessionTap = CGEventTapLocation(rawValue: 1)!
-private let f12KeyCode: Int64 = 111
-private let escapeKeyCode: Int64 = 53
-private let commandKeyCode: CGKeyCode = 55
+// Computed constants also initialize correctly when SwiftPM imports the executable for tests.
+nonisolated private var batCaveEventMarker: Int64 { 0x4261_7443_6176_6504 }
+nonisolated private var sessionTap: CGEventTapLocation { CGEventTapLocation(rawValue: 1)! }
+nonisolated private var f12KeyCode: Int64 { 111 }
+nonisolated private var escapeKeyCode: Int64 { 53 }
+nonisolated private var commandKeyCode: CGKeyCode { 55 }
 
 func emit(_ line: String = "") {
     guard !containsInputDetails(line) else { return }
+    if setupPreviewRequested() { return }
     FileHandle.standardOutput.write(Data((line + "\n").utf8))
 }
 
@@ -38,18 +41,23 @@ private final class InstructionPanel: NSPanel {
 }
 
 private final class InstructionHUD: @unchecked Sendable {
+    private let enabled: Bool
     private var panel: InstructionPanel?
     private var titleField: NSTextField?
     private var bodyField: NSTextField?
     private var generation = 0
 
+    init(enabled: Bool = true) { self.enabled = enabled }
+
     func show(title: String, lines: [String], hideAfter: Double? = nil) {
+        guard enabled else { return }
         Task { @MainActor in
             self.showOnMain(title: title, lines: lines, hideAfter: hideAfter)
         }
     }
 
     func hide() {
+        guard enabled else { return }
         Task { @MainActor in
             self.generation += 1
             self.panel?.orderOut(nil)
@@ -256,10 +264,11 @@ private struct StagedPhase {
     let prepLines: [String]
 }
 
-private final class BatCaveMacOSAgent: @unchecked Sendable {
+final class BatCaveMacOSAgent: @unchecked Sendable {
     private let lock = NSRecursiveLock()
-    private let hud = InstructionHUD()
+    private let hud: InstructionHUD
     private let lan: LanBridgePeer
+    private let eventPoster: (CGEvent) -> Void
     private let bounds = currentDisplayBounds()
     private var mode: BridgeMode = .off
     private var runToken: UInt64 = 0
@@ -274,23 +283,36 @@ private final class BatCaveMacOSAgent: @unchecked Sendable {
     private var remoteControlToken: UInt64 = 0
     private var remoteControlSafetyTimeoutSeconds: Double?
     private var remoteButtonsDown = Set<UInt32>()
+    private var remoteKeysDown = Set<CGKeyCode>()
+    private var unicodeVirtualKeys = Set<Int>()
     private var clipboardTimer: Timer?
     private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
     private var lastClipboardText: String?
 
-    init(lan: LanBridgePeer) {
+    init(lan: LanBridgePeer, showHUD: Bool = true, eventPoster: @escaping (CGEvent) -> Void = { $0.post(tap: sessionTap) }) {
         self.lan = lan
+        self.hud = InstructionHUD(enabled: showHUD)
+        self.eventPoster = eventPoster
         lan.remoteInputReceiver = self
         lan.updateLocalBounds(bounds)
     }
 
     func install(exitOnFailure: Bool = true) -> Bool {
-        let eventTypes: [CGEventType] = [.mouseMoved, .leftMouseDragged,
-            .rightMouseDragged, .otherMouseDragged, .leftMouseDown, .leftMouseUp,
-            .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp,
-            .scrollWheel, .keyDown, .keyUp, .flagsChanged]
-        var eventMask: CGEventMask = 0
-        for eventType in eventTypes { eventMask |= CGEventMask(1) << eventType.rawValue }
+        let eventMask =
+            (1 << CGEventType.mouseMoved.rawValue)
+            | (1 << CGEventType.leftMouseDragged.rawValue)
+            | (1 << CGEventType.rightMouseDragged.rawValue)
+            | (1 << CGEventType.otherMouseDragged.rawValue)
+            | (1 << CGEventType.leftMouseDown.rawValue)
+            | (1 << CGEventType.leftMouseUp.rawValue)
+            | (1 << CGEventType.rightMouseDown.rawValue)
+            | (1 << CGEventType.rightMouseUp.rawValue)
+            | (1 << CGEventType.otherMouseDown.rawValue)
+            | (1 << CGEventType.otherMouseUp.rawValue)
+            | (1 << CGEventType.scrollWheel.rawValue)
+            | (1 << CGEventType.keyDown.rawValue)
+            | (1 << CGEventType.keyUp.rawValue)
+            | (1 << CGEventType.flagsChanged.rawValue)
 
         let pointer = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
@@ -350,8 +372,8 @@ private final class BatCaveMacOSAgent: @unchecked Sendable {
         let connectionLine: String
         if !inputReady {
             connectionLine = "Permissions needed before connecting."
-        } else if let host {
-            connectionLine = "Auto-connecting to \(host):\(port)."
+        } else if host != nil {
+            connectionLine = lan.statusDescription
         } else {
             connectionLine = "No Windows host configured yet."
         }
@@ -469,6 +491,15 @@ private final class BatCaveMacOSAgent: @unchecked Sendable {
         stopLocked(reason: reason)
         stopRemoteControlLocked(reason: reason)
         lock.unlock()
+        if reason == "safety key" || reason == "event tap disabled" {
+            lan.disconnect(reason: reason)
+        }
+    }
+
+    var isRemoteControlActive: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return remoteControlActive
     }
 
     func resetVirtualCursor() {
@@ -483,7 +514,7 @@ private final class BatCaveMacOSAgent: @unchecked Sendable {
     }
 
     private func pollClipboard() {
-        guard CommandLine.arguments.contains("--share-clipboard"), lan.hasPeer else { return }
+        guard lan.clipboardSession() != nil else { return }
         let pasteboard = NSPasteboard.general
         let changeCount = pasteboard.changeCount
 
@@ -512,7 +543,7 @@ private final class BatCaveMacOSAgent: @unchecked Sendable {
     }
 
     private func applyRemoteClipboardText(_ message: ClipboardTextMessage, sourceDeviceId: String) {
-        guard CommandLine.arguments.contains("--share-clipboard"), message.text.utf8.count <= 65536 else { return }
+        guard message.text.utf8.count <= 64 * 1024 else { return }
         guard message.format.caseInsensitiveCompare("text/plain") == .orderedSame else {
             emit("CLIPBOARD RX ignored from \(sourceDeviceId): unsupported format=\(message.format)")
             return
@@ -576,6 +607,7 @@ private final class BatCaveMacOSAgent: @unchecked Sendable {
     func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             emitError("event tap disabled: \(type.rawValue)")
+            stop(reason: "event tap disabled")
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }
@@ -901,6 +933,10 @@ private final class BatCaveMacOSAgent: @unchecked Sendable {
 }
 
 extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
+    func lanPeer(_ peer: LanBridgePeer, didDisconnect reason: String) {
+        stop(reason: "LAN disconnected: \(reason)")
+    }
+
     func lanPeer(_ peer: LanBridgePeer, didReceiveTestStart message: RemoteTestStartMessage, sourceDeviceId: String) {
         lock.lock()
         remoteControlSafetyTimeoutSeconds = Double(max(message.durationSeconds, 1)) + 5
@@ -923,31 +959,34 @@ extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
 
     func lanPeer(_ peer: LanBridgePeer, didReceiveTestStop message: RemoteTestStopMessage, sourceDeviceId: String) {
         lock.lock()
+        defer { lock.unlock() }
+        guard remoteControlSourceDeviceId == nil || remoteControlSourceDeviceId == sourceDeviceId else { return }
         remoteControlSafetyTimeoutSeconds = nil
         stopRemoteControlLocked(reason: "remote stop from \(sourceDeviceId): \(message.reason)")
-        lock.unlock()
     }
 
     func lanPeer(_ peer: LanBridgePeer, didReceiveCursorHandoff message: CursorHandoffMessage, sourceDeviceId: String) {
+        lock.lock()
+        defer { lock.unlock() }
         guard message.targetDeviceId.caseInsensitiveCompare(lan.localDeviceId) == .orderedSame else {
+            if remoteControlSourceDeviceId == sourceDeviceId {
+                stopRemoteControlLocked(reason: "cursor handoff to \(message.targetDeviceId)", notify: false)
+            }
             emit("REMOTE HANDOFF ignored: targetDeviceId=\(message.targetDeviceId) localDeviceId=\(lan.localDeviceId)")
             return
         }
 
         let target = pointForRemoteHandoff(message)
-        lock.lock()
+        releaseRemoteInputLocked()
         remoteControlActive = true
         remoteControlSourceDeviceId = sourceDeviceId
         remoteControlToken += 1
-        remoteButtonsDown.removeAll()
         let token = remoteControlToken
         let safetyTimeoutSeconds = remoteControlSafetyTimeoutSeconds
         virtualCursor = bounds.clamped(target)
         let cursor = virtualCursor
         mode = .off
-        lock.unlock()
-
-        postMouse(type: .mouseMoved, at: cursor, button: .left, source: makeEventSource())
+        postMouse(type: .mouseMoved, at: cursor, button: .left, source: makeEventSource(), post: eventPoster)
         emit(String(format: "REMOTE CONTROL ON from %@ at x=%.1f y=%.1f targetEdge=%@ targetPosition=%.3f", sourceDeviceId, Double(cursor.x), Double(cursor.y), message.targetEdge, message.targetPosition))
 
         guard let safetyTimeoutSeconds else {
@@ -977,10 +1016,8 @@ extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
 
     func lanPeer(_ peer: LanBridgePeer, didReceiveMouseDelta message: MouseDeltaMessage, sourceDeviceId: String) {
         lock.lock()
-        guard remoteControlActive else {
-            lock.unlock()
-            return
-        }
+        defer { lock.unlock() }
+        guard remoteControlActive, remoteControlSourceDeviceId == sourceDeviceId else { return }
 
         mouseEvents += 1
         let desired = CGPoint(
@@ -991,13 +1028,13 @@ extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
         let cursor = virtualCursor
         let count = mouseEvents
         let dragButton = remoteDragButtonLocked()
-        lock.unlock()
 
         postMouse(
             type: remoteMouseMoveEventType(dragButton: dragButton),
             at: cursor,
             button: dragButton ?? .left,
-            source: makeEventSource()
+            source: makeEventSource(),
+            post: eventPoster
         )
         if count % 20 == 0 || abs(message.deltaX) > 80 || abs(message.deltaY) > 80 {
             emit(String(format: "REMOTE MOUSE dx=%5d dy=%5d cursor=(%.1f,%.1f) events=%llu", message.deltaX, message.deltaY, Double(cursor.x), Double(cursor.y), count))
@@ -1006,10 +1043,8 @@ extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
 
     func lanPeer(_ peer: LanBridgePeer, didReceiveMouseButton message: MouseButtonMessage, sourceDeviceId: String) {
         lock.lock()
-        guard remoteControlActive else {
-            lock.unlock()
-            return
-        }
+        defer { lock.unlock() }
+        guard remoteControlActive, remoteControlSourceDeviceId == sourceDeviceId else { return }
 
         let button = remoteMouseButton(message.button)
         if message.isDown {
@@ -1018,74 +1053,72 @@ extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
             remoteButtonsDown.remove(button.rawValue)
         }
         let cursor = virtualCursor
-        lock.unlock()
 
         let type = remoteMouseEventType(button: message.button, isDown: message.isDown)
-        postMouse(type: type, at: cursor, button: button, source: makeEventSource())
+        postMouse(type: type, at: cursor, button: button, source: makeEventSource(), post: eventPoster)
     }
 
     func lanPeer(_ peer: LanBridgePeer, didReceiveMouseWheel message: MouseWheelMessage, sourceDeviceId: String) {
         lock.lock()
-        let active = remoteControlActive
-        lock.unlock()
-        guard active else {
-            return
-        }
+        defer { lock.unlock() }
+        guard remoteControlActive, remoteControlSourceDeviceId == sourceDeviceId else { return }
 
-        postRemoteScroll(verticalDelta: message.verticalDelta, horizontalDelta: message.horizontalDelta, source: makeEventSource())
+        postRemoteScroll(verticalDelta: message.verticalDelta, horizontalDelta: message.horizontalDelta, source: makeEventSource(), post: eventPoster)
     }
 
     func lanPeer(_ peer: LanBridgePeer, didReceiveKeyInput message: KeyInputMessage, sourceDeviceId: String) {
         lock.lock()
-        guard remoteControlActive else {
-            lock.unlock()
-            return
-        }
+        defer { lock.unlock() }
+        guard remoteControlActive, remoteControlSourceDeviceId == sourceDeviceId else { return }
 
         keyEvents += 1
         let count = keyEvents
-        lock.unlock()
 
         if !message.isKeyUp, let text = message.text, !text.isEmpty {
-            postUnicodeText(text, source: makeEventSource())
-            emit("REMOTE KEY text=\(escapeForLog(text)) keyEvents=\(count)")
+            unicodeVirtualKeys.insert(message.virtualKey)
+            postUnicodeText(text, source: makeEventSource(), post: eventPoster)
+            emit("REMOTE KEY textLength=\(text.count) keyEvents=\(count)")
             return
         }
+        // Unicode text is emitted as a complete down/up pair, so its physical
+        // key-up must not become an unrelated native key-up.
+        if message.isKeyUp, unicodeVirtualKeys.remove(message.virtualKey) != nil { return }
 
         guard let keyCode = macKeyCode(forWindowsVirtualKey: message.virtualKey) else {
             return
         }
 
-        postKeyboard(keyCode: keyCode, keyDown: !message.isKeyUp, source: makeEventSource())
+        if message.isKeyUp { remoteKeysDown.remove(keyCode) } else { remoteKeysDown.insert(keyCode) }
+        postKeyboard(keyCode: keyCode, keyDown: !message.isKeyUp, source: makeEventSource(), flags: remoteModifierFlagsLocked(), post: eventPoster)
     }
 
     func lanPeer(_ peer: LanBridgePeer, didReceiveShortcutInput message: ShortcutInputMessage, sourceDeviceId: String) {
         lock.lock()
-        guard remoteControlActive else {
-            lock.unlock()
-            return
-        }
+        defer { lock.unlock() }
+        guard remoteControlActive, remoteControlSourceDeviceId == sourceDeviceId else { return }
 
         keyEvents += 1
         let count = keyEvents
-        lock.unlock()
 
         guard let keyCode = macShortcutKeyCode(forAction: message.action) else {
             emit("REMOTE SHORTCUT unsupported action=\(message.action) keyEvents=\(count)")
             return
         }
 
-        postCommandShortcut(keyCode: keyCode, source: makeEventSource())
+        postCommandShortcut(keyCode: keyCode, source: makeEventSource(), post: eventPoster)
         emit("REMOTE SHORTCUT action=\(message.action) keyEvents=\(count)")
     }
 
     func lanPeer(_ peer: LanBridgePeer, didReceiveClipboardText message: ClipboardTextMessage, sourceDeviceId: String) {
+        let session = peer.clipboardSessionOnReceiverQueue()
         DispatchQueue.main.async {
+            guard let session, peer.clipboardSession() == session else { return }
             self.applyRemoteClipboardText(message, sourceDeviceId: sourceDeviceId)
         }
     }
 
-    private func stopRemoteControlLocked(reason: String) {
+    private func stopRemoteControlLocked(reason: String, notify: Bool = true) {
+        releaseRemoteInputLocked()
         guard remoteControlActive else {
             return
         }
@@ -1094,15 +1127,51 @@ extension BatCaveMacOSAgent: LanBridgeRemoteInputReceiver {
         remoteControlActive = false
         remoteControlSourceDeviceId = nil
         remoteControlSafetyTimeoutSeconds = nil
-        remoteButtonsDown.removeAll()
         emit()
         emit("REMOTE CONTROL OFF (\(reason)).")
         emit()
+        guard notify else {
+            hud.hide()
+            return
+        }
         hud.show(
             title: "REMOTE CONTROL OFF",
             lines: [reason],
             hideAfter: 3
         )
+    }
+
+    private func releaseRemoteInputLocked() {
+        guard !remoteButtonsDown.isEmpty || !remoteKeysDown.isEmpty || !unicodeVirtualKeys.isEmpty else { return }
+        let source = makeEventSource()
+        for raw in remoteButtonsDown.sorted() {
+            let button = CGMouseButton(rawValue: raw) ?? .center
+            let type: CGEventType = button == .left ? .leftMouseUp : (button == .right ? .rightMouseUp : .otherMouseUp)
+            postMouse(type: type, at: virtualCursor, button: button, source: source, post: eventPoster)
+        }
+        // Release non-modifiers first, then modifiers, to avoid altered key-ups.
+        let modifiers: Set<CGKeyCode> = [54, 55, 56, 58, 59, 60, 61, 62]
+        let keys = remoteKeysDown.sorted { a, b in
+            if modifiers.contains(a) != modifiers.contains(b) { return !modifiers.contains(a) }
+            return a < b
+        }
+        for key in keys {
+            remoteKeysDown.remove(key)
+            postKeyboard(keyCode: key, keyDown: false, source: source, flags: remoteModifierFlagsLocked(), post: eventPoster)
+        }
+        emit("REMOTE INPUT RELEASE buttons=\(remoteButtonsDown.count) keys=\(keys.count)")
+        remoteButtonsDown.removeAll()
+        remoteKeysDown.removeAll()
+        unicodeVirtualKeys.removeAll()
+    }
+
+    private func remoteModifierFlagsLocked() -> CGEventFlags {
+        var flags: CGEventFlags = []
+        if !remoteKeysDown.isDisjoint(with: [56, 60]) { flags.insert(.maskShift) }
+        if !remoteKeysDown.isDisjoint(with: [59, 62]) { flags.insert(.maskControl) }
+        if !remoteKeysDown.isDisjoint(with: [58, 61]) { flags.insert(.maskAlternate) }
+        if !remoteKeysDown.isDisjoint(with: [54, 55]) { flags.insert(.maskCommand) }
+        return flags
     }
 
     private func pointForRemoteHandoff(_ message: CursorHandoffMessage) -> CGPoint {
@@ -1200,7 +1269,7 @@ private func mark(_ event: CGEvent) {
     event.setIntegerValueField(.eventSourceUserData, value: batCaveEventMarker)
 }
 
-private func postMouse(type: CGEventType, at point: CGPoint, button: CGMouseButton, source: CGEventSource) {
+private func postMouse(type: CGEventType, at point: CGPoint, button: CGMouseButton, source: CGEventSource, post: (CGEvent) -> Void = { $0.post(tap: sessionTap) }) {
     guard let event = CGEvent(
         mouseEventSource: source,
         mouseType: type,
@@ -1212,7 +1281,7 @@ private func postMouse(type: CGEventType, at point: CGPoint, button: CGMouseButt
     }
 
     mark(event)
-    event.post(tap: sessionTap)
+    post(event)
 }
 
 private func postScroll(from sourceEvent: CGEvent, source: CGEventSource) {
@@ -1239,7 +1308,7 @@ private func postScroll(from sourceEvent: CGEvent, source: CGEventSource) {
     event.post(tap: sessionTap)
 }
 
-private func postRemoteScroll(verticalDelta: Int, horizontalDelta: Int, source: CGEventSource) {
+private func postRemoteScroll(verticalDelta: Int, horizontalDelta: Int, source: CGEventSource, post: (CGEvent) -> Void = { $0.post(tap: sessionTap) }) {
     let vertical = wheelClicks(verticalDelta)
     let horizontal = wheelClicks(horizontalDelta)
     guard vertical != 0 || horizontal != 0 else {
@@ -1259,7 +1328,7 @@ private func postRemoteScroll(verticalDelta: Int, horizontalDelta: Int, source: 
     }
 
     mark(event)
-    event.post(tap: sessionTap)
+    post(event)
 }
 
 private func wheelClicks(_ delta: Int) -> Int {
@@ -1275,7 +1344,7 @@ private func wheelClicks(_ delta: Int) -> Int {
     return delta > 0 ? 1 : -1
 }
 
-private func postUnicodeText(_ text: String, source: CGEventSource) {
+private func postUnicodeText(_ text: String, source: CGEventSource, post: (CGEvent) -> Void = { $0.post(tap: sessionTap) }) {
     for scalar in text.unicodeScalars {
         let utf16 = Array(String(scalar).utf16)
         guard !utf16.isEmpty else {
@@ -1294,22 +1363,23 @@ private func postUnicodeText(_ text: String, source: CGEventSource) {
         }
         mark(down)
         mark(up)
-        down.post(tap: sessionTap)
-        up.post(tap: sessionTap)
+        post(down)
+        post(up)
     }
 }
 
-private func postKeyboard(keyCode: CGKeyCode, keyDown: Bool, source: CGEventSource) {
+private func postKeyboard(keyCode: CGKeyCode, keyDown: Bool, source: CGEventSource, flags: CGEventFlags? = nil, post: (CGEvent) -> Void = { $0.post(tap: sessionTap) }) {
     guard let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: keyDown) else {
         emitError("failed to create keyboard event keyCode=\(keyCode)")
         return
     }
 
     mark(event)
-    event.post(tap: sessionTap)
+    if let flags { event.flags = flags }
+    post(event)
 }
 
-private func postCommandShortcut(keyCode: CGKeyCode, source: CGEventSource) {
+private func postCommandShortcut(keyCode: CGKeyCode, source: CGEventSource, post: (CGEvent) -> Void = { $0.post(tap: sessionTap) }) {
     let commandFlags: CGEventFlags = .maskCommand
     guard let commandDown = CGEvent(keyboardEventSource: source, virtualKey: commandKeyCode, keyDown: true),
           let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
@@ -1326,7 +1396,7 @@ private func postCommandShortcut(keyCode: CGKeyCode, source: CGEventSource) {
 
     for event in [commandDown, keyDown, keyUp, commandUp] {
         mark(event)
-        event.post(tap: sessionTap)
+        post(event)
     }
 }
 
@@ -1395,6 +1465,33 @@ private func macKeyCode(forWindowsVirtualKey virtualKey: Int) -> CGKeyCode? {
         return 48 // Tab
     case 0x0D:
         return 36 // Return
+    case 0x10, 0xA0: return 56 // Shift / left Shift
+    case 0xA1: return 60 // Right Shift
+    case 0x11, 0xA2: return 59 // Control / left Control
+    case 0xA3: return 62 // Right Control
+    case 0x12, 0xA4: return 58 // Alt / left Option
+    case 0xA5: return 61 // Right Option
+    case 0x5B: return 55 // Left Windows / Command
+    case 0x5C: return 54 // Right Windows / Command
+    case 0x1B: return 53 // Escape
+    case 0x20: return 49 // Space
+    case 0x21: return 116 // Page Up
+    case 0x22: return 121 // Page Down
+    case 0x23: return 119 // End
+    case 0x24: return 115 // Home
+    case 0x2E: return 117 // Forward Delete
+    case 0x70: return 122 // F1
+    case 0x71: return 120 // F2
+    case 0x72: return 99 // F3
+    case 0x73: return 118 // F4
+    case 0x74: return 96 // F5
+    case 0x75: return 97 // F6
+    case 0x76: return 98 // F7
+    case 0x77: return 100 // F8
+    case 0x78: return 101 // F9
+    case 0x79: return 109 // F10
+    case 0x7A: return 103 // F11
+    case 0x7B: return 111 // F12
     case 0x25:
         return 123 // Left arrow
     case 0x26:
@@ -1525,19 +1622,23 @@ private func printHelp() {
     emit("  S  Stop active mode.")
     emit("  R  Reset virtual cursor to current macOS cursor.")
     emit("  P  Print current state.")
-    emit("  L [port]  Start LAN listener. Default port is 47870.")
-    emit("  C <host> [port]  Connect to LAN peer. Default port is 47870.")
+    emit("  L [port]  Network listeners are disabled in this preview.")
+    emit("  C <host> [port]  Connect to explicit loopback development peer. Default port is 47870.")
     emit("  N  Print LAN state.")
     emit("  Q  Quit.")
     emit()
     emit("Safety:")
     emit("  Escape or F12 stops the active mode.")
     emit("  Each mode auto-stops.")
-    emit("  Text clipboard sync is active while a LAN peer is connected.")
+    emit("  Legacy networking requires --insecure-loopback-development and a literal loopback host.")
+    emit("  Text clipboard sharing is disabled until you explicitly enable it.")
     emit()
     emit("Launch options:")
     emit("  --auto-receive-test <windows-host> [--port 47870]")
     emit("  --app-mode [--config <path>]")
+    emit("  --setup-preview  Open guided secure pairing and input setup.")
+    emit("  --insecure-loopback-development  Allow plaintext localhost development only.")
+    emit("  --share-clipboard  Opt in to text clipboard sharing in loopback development.")
     emit()
 }
 
@@ -1636,6 +1737,43 @@ private struct LaunchOptions {
 }
 
 private var appModeMenuController: AppModeMenuController?
+
+private final class AppLifecycle: NSObject, NSApplicationDelegate, @unchecked Sendable {
+    let agent: BatCaveMacOSAgent
+    let lan: LanBridgePeer
+    private var sleepObserver: NSObjectProtocol?
+    private var activity: NSObjectProtocol?
+    private var signals: [DispatchSourceSignal] = []
+
+    init(agent: BatCaveMacOSAgent, lan: LanBridgePeer) {
+        self.agent = agent
+        self.lan = lan
+        super.init()
+        activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "BatCave input sharing")
+        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.agent.stop(reason: "Mac sleeping")
+            self?.lan.disconnect(reason: "Mac sleeping")
+        }
+        for number in [SIGINT, SIGTERM] {
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+            source.setEventHandler { [weak self] in
+                self?.agent.stop(reason: "termination signal")
+                Task { @MainActor in NSApp.terminate(nil) }
+            }
+            source.resume()
+            signals.append(source)
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        agent.stop(reason: "app terminating")
+        lan.dispose()
+        if let activity { ProcessInfo.processInfo.endActivity(activity) }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+}
 
 private func parseLaunchOptions(_ args: [String]) throws -> LaunchOptions {
     var options = LaunchOptions()
@@ -1780,16 +1918,18 @@ private func readAppConfig(at path: String) -> AppConfig {
     return config
 }
 
-private final class AppModeMenuController: NSObject, @unchecked Sendable {
+private final class AppModeMenuController: NSObject, NSMenuDelegate, @unchecked Sendable {
     private var statusItem: NSStatusItem?
     private let agent: BatCaveMacOSAgent
+    private let lan: LanBridgePeer
     private let host: String?
     private let port: UInt16
     private let configPath: String
     private let inputReady: Bool
 
-    init(agent: BatCaveMacOSAgent, host: String?, port: UInt16, configPath: String, inputReady: Bool) {
+    init(agent: BatCaveMacOSAgent, lan: LanBridgePeer, host: String?, port: UInt16, configPath: String, inputReady: Bool) {
         self.agent = agent
+        self.lan = lan
         self.host = host
         self.port = port
         self.configPath = configPath
@@ -1814,6 +1954,7 @@ private final class AppModeMenuController: NSObject, @unchecked Sendable {
     @MainActor
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.delegate = self
         let status = NSMenuItem(title: connectionDescription, action: nil, keyEquivalent: "")
         status.isEnabled = false
         menu.addItem(status)
@@ -1829,10 +1970,14 @@ private final class AppModeMenuController: NSObject, @unchecked Sendable {
         if !inputReady {
             return "Permissions needed"
         }
-        if let host {
-            return "Auto-connect: \(host):\(port)"
+        if host != nil {
+            return lan.statusDescription
         }
         return "No Windows host configured"
+    }
+
+    @MainActor func menuWillOpen(_ menu: NSMenu) {
+        menu.items.first?.title = connectionDescription
     }
 
     private func menuItem(title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
@@ -1879,6 +2024,29 @@ if CommandLine.arguments.contains("--help") {
     exit(0)
 }
 
+if setupPreviewRequested() {
+    runSetupPreview()
+    exit(0)
+}
+
+// Finder drops stdout. Preserve diagnostics beside the isolated development
+// bundle so native launch, permissions, handoffs and disconnects are observable.
+if isLaunchedFromAppBundle(), !CommandLine.arguments.contains("--permission-status") {
+    let directory = Bundle.main.bundleURL.deletingLastPathComponent()
+    if directory.lastPathComponent == "Development" {
+        let logURL = directory.appendingPathComponent("BatCaveMacOSAgent.log")
+        if !FileManager.default.fileExists(atPath: logURL.path) {
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        }
+        if let log = try? FileHandle(forWritingTo: logURL) {
+            _ = try? log.seekToEnd()
+            dup2(log.fileDescriptor, STDOUT_FILENO)
+            dup2(log.fileDescriptor, STDERR_FILENO)
+            emit("SESSION START \(ISO8601DateFormatter().string(from: Date())) pid=\(getpid())")
+        }
+    }
+}
+
 private let launchOptions: LaunchOptions
 do {
     launchOptions = resolveLaunchOptions(try parseLaunchOptions(Array(CommandLine.arguments.dropFirst())))
@@ -1887,13 +2055,23 @@ do {
     exit(2)
 }
 
+if CommandLine.arguments.contains("--permission-status") {
+    printPermissionStatus()
+    exit(0)
+}
+
 maybeRequestPermissions()
 printPermissionStatus()
 NSApplication.shared.setActivationPolicy(launchOptions.appMode ? .regular : .accessory)
 
-private let lan = LanBridgePeer(allowInsecureLoopback: CommandLine.arguments.contains("--insecure-loopback-development"))
+private let lan = LanBridgePeer(allowInsecureLoopback: CommandLine.arguments.contains("--insecure-loopback-development"),
+    allowLegacyClipboard: CommandLine.arguments.contains("--share-clipboard"))
 private let agent = BatCaveMacOSAgent(lan: lan)
-let eventTapInstalled = agent.install(exitOnFailure: !launchOptions.appMode)
+private let lifecycle = AppLifecycle(agent: agent, lan: lan)
+NSApplication.shared.delegate = lifecycle
+let inputPermissionsReady = AXIsProcessTrusted() && CGPreflightListenEventAccess()
+let eventTapInstalled = inputPermissionsReady && agent.install(exitOnFailure: !launchOptions.appMode)
+if !eventTapInstalled, !launchOptions.appMode { exit(1) }
 if CommandLine.arguments.contains("--share-clipboard") { agent.startClipboardSync() }
 printHelp()
 agent.printState(reason: "startup")
@@ -1908,7 +2086,7 @@ if let host = launchOptions.autoReceiveHost, eventTapInstalled {
     emit("AUTO HANDOFF RECEIVER armed.")
     emit("Connecting to Windows at \(host):\(launchOptions.port).")
     emit("Wait for the Windows countdown; no local macOS command is required.")
-    lan.connect(host: host, port: launchOptions.port)
+    lan.connect(host: host, port: launchOptions.port, automaticallyReconnect: launchOptions.appMode)
     emit()
 } else if launchOptions.autoReceiveHost != nil {
     emit("AUTO HANDOFF RECEIVER waiting for permissions before connecting.")
@@ -1919,6 +2097,7 @@ if launchOptions.appMode {
     agent.showAppModeStatus(host: launchOptions.autoReceiveHost, port: launchOptions.port, inputReady: eventTapInstalled)
     appModeMenuController = AppModeMenuController(
         agent: agent,
+        lan: lan,
         host: launchOptions.autoReceiveHost,
         port: launchOptions.port,
         configPath: launchOptions.configPath ?? defaultAppConfigPath(),
