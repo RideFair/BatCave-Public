@@ -1,0 +1,140 @@
+"""Render actual GTK widgets; no permission request, input emission or network."""
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gsk", "4.0")
+gi.require_version("Graphene", "1.0")
+from gi.repository import Gio, GLib, Graphene, Gtk
+
+from batcave_linux.desktop import Application
+from batcave_linux.identity import Approvals, Identity
+from batcave_linux.storage import StateDirectory
+from batcave_linux.protocol import Bounds
+from test_core import MemoryVault
+from test_native import NativeTests
+
+root = Path(__file__).resolve().parents[1]
+Gtk.init()
+with tempfile.TemporaryDirectory() as directory:
+    state = StateDirectory(directory)
+    identity = Identity.open(state, MemoryVault(), "Linux test computer")
+    application = Application(root / ".build/libbatcave-ei.so", (state, identity, Approvals(state)))
+    application.register(None); application.activate()
+    window = application.window
+    if window is None:
+        raise RuntimeError("GTK application did not create a window.")
+    errors = []
+    # A connected callback queued before manual stop cannot revive the UI/session.
+    old_epoch = window.epoch
+    window.inbox.put(old_epoch, "connected", Bounds(0, 0, 1920, 1080))
+    window._stop(); window._tick()
+    assert not window.connected and window.input.epoch is None
+    # A FIFO must be refused without waiting for a writer or retaining an FD.
+    fifo = Path(directory) / "not-a-regular-file"; os.mkfifo(fifo)
+    try:
+        window._stage_files([Gio.File.new_for_path(str(fifo))])
+        raise AssertionError("A FIFO entered the shelf")
+    except ValueError:
+        assert not window.files
+    view = sys.argv[2] if len(sys.argv) > 2 else "permissions"
+    if view not in {"permissions", "pair", "layout", "link", "files", "details"}: raise ValueError("Unknown view")
+    if len(sys.argv) > 3 and sys.argv[3] == "small": window.set_default_size(880, 640)
+    # Navigation cannot create approvals, grant desktop input or open a socket.
+    for step in range(4):
+        window._show_step(step)
+        assert not window.approvals.cards and not window.connected and not window.input.armed
+    window._show_step(0)
+    assert not window.details.get_expanded()
+    # Exercise the real GUI action against an isolated EIS server, never the OS.
+    native = NativeTests(); original_backend = window.backend
+    original_lifecycle = window.lifecycle_ready
+    native.setUp()
+    try:
+        peer_state = StateDirectory(Path(directory) / "peer")
+        try:
+            peer = Identity.open(peer_state, MemoryVault(), "Windows test computer")
+            window.approvals.approve(peer.card); window._refresh_peers()
+        finally:
+            peer_state.close()
+        window.backend = window.input.backend = native.backend
+        window.lifecycle_ready = True
+        window.address.set_text("203.0.113.10")  # Documentation-only address; no connection is opened.
+        window._show_step(3)
+        for _ in range(2):
+            window.inbox.put(window.epoch, "connected", Bounds(0, 0, 1920, 1080)); window._tick()
+            assert window.connected and not window.input.armed
+            window._show_step(2); window._activate_primary()
+            assert window.setup_step == 3 and not window.input.armed
+            assert window.primary.get_label() == "Enable Linux input" and window.primary.get_sensitive()
+            window._save_setup()
+            assert not window.input.armed
+            window._activate_primary()
+            assert window.input.armed and not window.input.owns_cursor
+            native.pump()
+            assert native.server.fixture_keys(native.fixture) == native.server.fixture_buttons(native.fixture) == 0
+            window._stop()
+            assert not window.connected and not window.input.armed
+        window.inbox.put(window.epoch, "connected", Bounds(0, 0, 1920, 1080)); window._tick()
+        window.lifecycle_ready = False; window._update_setup()
+        assert not window.primary.get_sensitive()
+        window._allow()
+        assert not window.input.armed and not window.input.owns_cursor
+        window.approvals.remove(peer.card.device_id); window._refresh_peers()
+    finally:
+        window._stop(); native.tearDown()
+        window.backend = window.input.backend = original_backend
+        window.lifecycle_ready = original_lifecycle
+        window.address.set_text(""); window._show_step(0)
+        window.status.set_text("Setup is ready. Continue to link your computers.")
+    def select_view():
+        if view == "files":
+            example = Path(directory) / "Example document.txt"; example.write_text("Disposable UI fixture.")
+            window._stage_files([Gio.File.new_for_path(str(example))]); window.stack.set_visible_child_name("files")
+        else:
+            window._show_step({"permissions": 0, "pair": 1, "layout": 2, "link": 3, "details": 3}[view])
+            if view == "details":
+                window.details.set_expanded(True)
+                def reveal_details():
+                    adjustment = window.detail_scroll.get_vadjustment()
+                    adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
+                    return False
+                GLib.timeout_add(200, reveal_details)
+        GLib.timeout_add(350, capture)
+        return False
+    def capture():
+        try:
+            assert not window.connected and not window.input.armed and not window.backend.ready()
+            assert window.stack.get_visible_child_name() == ("files" if view == "files" else "setup")
+            assert not window.approvals.cards
+            assert window.permission_label.get_text() == "Desktop access: not granted"
+            # The fixed navigation and primary action remain inside the window.
+            if window.get_width() > (880 if len(sys.argv) > 3 else 1000):
+                def measure(widget, path=""):
+                    size = widget.measure(Gtk.Orientation.HORIZONTAL, -1)[:2]
+                    if size[0] > 500: print(path, type(widget).__name__, widget.get_css_classes(), size)
+                    child = widget.get_first_child(); index = 0
+                    while child:
+                        measure(child, path + "/" + str(index)); child = child.get_next_sibling(); index += 1
+                measure(window)
+            assert window.get_width() <= (880 if len(sys.argv) > 3 else 1000), f"Unexpected width: {window.get_width()}"
+            assert window.get_height() <= (668 if len(sys.argv) > 3 else 788), f"Unexpected height: {window.get_height()}"
+            paintable = Gtk.WidgetPaintable.new(window)
+            snapshot = Gtk.Snapshot.new()
+            paintable.snapshot(snapshot, window.get_width(), window.get_height())
+            node = snapshot.to_node()
+            bounds = Graphene.Rect(); bounds.init(0, 0, window.get_width(), window.get_height())
+            texture = window.get_native().get_renderer().render_texture(node, bounds)
+            assert texture.save_to_png(sys.argv[1])
+            print("PASS: actual GTK setup rendered without a peer, network connection or input permission.")
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            window.close(); application.quit(); loop.quit()
+            assert not window.files and state.fd == -1
+        return False
+    loop = GLib.MainLoop(); GLib.timeout_add(100, select_view); loop.run()
+    if errors: raise errors[0]
