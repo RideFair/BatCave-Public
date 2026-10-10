@@ -425,9 +425,12 @@ class Window(Gtk.ApplicationWindow):
         self._update_setup()
         return False
 
-    def _refresh_peers(self):
+    def _refresh_peers(self, selected_id=None):
+        selected = self.peers.get_selected()
+        if selected_id is None and selected < len(self.peer_ids): selected_id = self.peer_ids[selected]
         self.peer_ids = list(self.approvals.cards)
         self.peers.set_model(Gtk.StringList.new([self.approvals.cards[key].display_name for key in self.peer_ids]))
+        if selected_id in self.peer_ids: self.peers.set_selected(self.peer_ids.index(selected_id))
         self._update_setup()
 
     def _peer(self):
@@ -471,7 +474,7 @@ class Window(Gtk.ApplicationWindow):
             prompt.set_default_response(Gtk.ResponseType.NO)
             def approved(widget, response):
                 if response == Gtk.ResponseType.YES:
-                    self._stop(); self._guard(lambda: self.approvals.approve(card_value)); self._refresh_peers()
+                    self._stop(); self._guard(lambda: self.approvals.approve(card_value)); self._refresh_peers(card_value.device_id)
                     if card_value.device_id in self.approvals.cards:
                         self.status.set_text("Computer approved. Continue when both computers have approved each other.")
                 widget.destroy()

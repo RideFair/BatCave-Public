@@ -89,6 +89,22 @@ with tempfile.TemporaryDirectory() as directory:
                     assert not window.peer_controls.get_visible() and not window.remove_peer.get_visible()
                     prompt.response(response)
                     assert bool(window.approvals.cards) == (response == Gtk.ResponseType.YES)
+                # A second approval selects that computer; later refreshes retain it.
+                second_state = StateDirectory(Path(directory) / "second-peer")
+                try:
+                    second = Identity.open(second_state, MemoryVault(), "Windows test laptop")
+                    connection_file.write_bytes(second.card.serialize()); window._import()
+                    prompt = next(item for item in Gtk.Window.list_toplevels() if isinstance(item, Gtk.MessageDialog))
+                    assert len(window.approvals.cards) == 1 and window._peer().device_id == peer.card.device_id
+                    prompt.response(Gtk.ResponseType.YES)
+                    assert len(window.approvals.cards) == 2 and window._peer().device_id == second.card.device_id
+                    window._refresh_peers()
+                    assert window._peer().device_id == second.card.device_id
+                    assert not window.connected and not window.input.armed
+                    window._unpair()
+                    assert len(window.approvals.cards) == 1 and window._peer().device_id == peer.card.device_id
+                finally:
+                    second_state.close()
             finally:
                 window._dialog = original_dialog
             assert window.peer_controls.get_visible() and window.remove_peer.get_visible()
