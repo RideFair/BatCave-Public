@@ -165,6 +165,12 @@ internal static class NearbyPairingChecks
         var card = Describe(cert, "linux:synthetic", "Desk computer", 47870).Card;
         var now = DateTimeOffset.UtcNow;
         var bytes = NearbyDiscovery.Announcement(card, 47870, 47873, true);
+        var unicodeName = string.Concat(Enumerable.Repeat("電", 128));
+        var unicode = NearbyDiscovery.Announcement(card with { DisplayName = unicodeName }, 47870, 47873, true);
+        Require(unicode.Length <= 1024 && NearbyDiscovery.ReadAnnouncement(unicode, IPAddress.Parse("192.0.2.15"), now).DisplayName == unicodeName,
+            "Unicode display names fit the common discovery byte limit without unnecessary escapes");
+        var emojiName = string.Concat(Enumerable.Repeat("🙂", 100));
+        NearbyPairingProtocol.ValidateDescriptor(Describe(cert, "linux:unicode", emojiName, 47870));
         var peer = NearbyDiscovery.ReadAnnouncement(bytes, IPAddress.Parse("192.0.2.15"), now);
         Require(peer.InputPort == 47870 && peer.Address.ToString() == "192.0.2.15", "source address and actual input port preserved");
         using var discovery = new NearbyDiscovery("windows:self", () => bytes);
