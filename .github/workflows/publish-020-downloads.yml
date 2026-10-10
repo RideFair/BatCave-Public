@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: batcave-020-publication
@@ -22,7 +23,31 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Verify reviewed assets without changing the release
+      - name: Verify reviewed assets and publish the authorized downloads
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 Scripts/publish_020_downloads.py
+        run: python3 Scripts/publish_020_downloads.py --publish
+      - name: Open the installer-link correction for review
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          base = 'https://api.github.com/repos/RideFair/BatCave-Public/'
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                     'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json',
+                     'User-Agent': 'BatCave-download-fix'}
+          with urllib.request.urlopen(urllib.request.Request(
+              base + 'pulls?state=open&head=RideFair%3Acodex%2Ffix-020-downloads', headers=headers), timeout=30) as r:
+              existing = json.load(r)
+          if existing:
+              print('Review: ' + existing[0]['html_url'])
+          else:
+              payload = {'base': 'main', 'head': 'codex/fix-020-downloads',
+                         'title': 'Fix public BatCave 0.2.0 installer downloads',
+                         'body': 'The front-page installer links referenced an unpublished draft and returned 404. Publish the existing reviewed assets under v0.2.0 and use permanent public links. The guarded publishing workflow verifies all eight frozen hashes, reviewed release notes and source tag before publication; no installer bytes change. Existing signing and physical-device verification limits remain documented. Validation: real eight-asset download/hash preflight, source privacy gate, redirect token checks and publication checks.'}
+              with urllib.request.urlopen(urllib.request.Request(
+                  base + 'pulls', data=json.dumps(payload).encode(), headers=headers, method='POST'), timeout=30) as r:
+                  print('Review: ' + json.load(r)['html_url'])
+          PY

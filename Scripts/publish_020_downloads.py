@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -18,7 +19,19 @@ EXPECTED = {
     "BatCave-0.2.0-arm64.dmg": "d4307f18e668dddf12bc41eed98344794ccfd49adb031abc72fdfa3c2444c3a7",
     "BatCave-Linux-0.2.0-amd64.deb": "f7160460f8059f98a430c046a1786bcb74ca2494da5b9614d7482b9a76314223",
     "BatCave-0.2.0-Source.zip": "b1b6fbdbf50fd5017b3da801bee43b1ec4351339f850a46bbcc35a0234579f12",
+    "BatCave-0.2.0-build-manifests.json": "add273d907d95cdda9cc4168b1ab87b220eae53ebdc9d372b22b9b59b32670e7",
+    "BatCave-0.2.0-verification.txt": "bdff84efb9804fce3c3659a4278f569a33c7796c1af0cbb030c46cb09cf47c71",
+    "INSTALL.md": "41e5d9876aba32844f94c82ed3fb0c5a5af1df9e32344d461b92d24dffa7605f",
+    "SHA256SUMS": "8ba0817aa01a3d18337ca327521ab3743cf8c77e3f293d3980393e6813ca7474",
 }
+NOTES_HASHES = {
+    "61bc622c1ac784fc8a299693c03479211cf7030cb2a393f4ed9f3a021a4dbb3e",
+    "810c6556cd561f42e402dc8db692135a323f478ef51ac3e1dfb48d326c3e717f",
+}
+DRAFT_ACCESS = ("These downloads are staged for the maintainer's installation and device tests.\n"
+                "Sign into GitHub with repository write access to see this draft and its assets.")
+PUBLIC_ACCESS = ("Downloads are public and do not require a GitHub login.\n"
+                 "These installers are available for installation and device testing.")
 
 
 class AssetRedirect(urllib.request.HTTPRedirectHandler):
@@ -65,6 +78,26 @@ def main():
             require(len(data) <= 2 * 1024 * 1024, "Unexpected API response size.")
             return json.loads(data)
 
+    def verify_tag(allow_missing):
+        try:
+            reference = api("git/ref/tags/" + TAG)
+        except urllib.error.HTTPError as error:
+            if error.code == 404 and allow_missing:
+                return
+            raise
+        target = reference["object"]
+        for _ in range(4):
+            if target["type"] == "commit":
+                require(target["sha"] == SOURCE, "Existing release tag points to different source.")
+                return
+            require(target["type"] == "tag", "Unexpected release tag object.")
+            target = api("git/tags/" + target["sha"])["object"]
+        raise RuntimeError("Release tag nesting exceeds its bound.")
+
+    def inventory(values):
+        return sorted((asset["id"], asset["name"], asset["size"], asset.get("digest"), asset["state"])
+                      for asset in values)
+
     releases = api("releases?per_page=100")
     matches = [release for release in releases if release["tag_name"] == TAG]
     require(len(matches) == 1, "Exactly one existing 0.2.0 release must be staged.")
@@ -73,11 +106,14 @@ def main():
             "Staged release source differs from the reviewed commit.")
     require(isinstance(release.get("body"), str) and release["body"].strip(),
             "Existing release verification notes must be preserved.")
+    require(hashlib.sha256(release["body"].strip().encode()).hexdigest() in NOTES_HASHES,
+            "Release notes differ from the reviewed notes.")
+    verify_tag(allow_missing=release["draft"])
     assets = api(f"releases/{release['id']}/assets?per_page=100")
     names = [asset["name"] for asset in assets]
-    require(len(assets) == 8 and len(set(names)) == 8 and EXPECTED.keys() <= set(names),
+    require(len(assets) == 8 and len(set(names)) == 8 and EXPECTED.keys() == set(names),
             "Frozen release inventory differs from the reviewed eight assets.")
-    require(all(0 < asset["size"] <= 128 * 1024 * 1024 for asset in assets),
+    require(all(asset["state"] == "uploaded" and 0 < asset["size"] <= 128 * 1024 * 1024 for asset in assets),
             "Unexpected asset size.")
 
     for asset in assets:
@@ -86,7 +122,7 @@ def main():
         digest = asset.get("digest", "")
         require(isinstance(digest, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", digest),
                 "An asset is missing its stored SHA-256.")
-        expected = EXPECTED.get(name, digest.split(":", 1)[1])
+        expected = EXPECTED[name]
         require(digest == "sha256:" + expected, "Frozen asset metadata hash changed: " + name)
         sha = hashlib.sha256()
         size = 0
@@ -99,19 +135,31 @@ def main():
                 "Downloaded asset differs from reviewed bytes: " + name)
         print(f"Verified {name}: {expected}", flush=True)
 
-    print("Existing release notes (retained verbatim):\n" + release["body"], flush=True)
+    print("Reviewed release notes (only draft-access wording will change):\n" + release["body"], flush=True)
     if not options.publish:
         print("Verification complete. No release or asset was changed.", flush=True)
         return
-    if release["draft"]:
-        # Check again after downloads; never overwrite a concurrent notes edit.
-        current = api(f"releases/{release['id']}")
-        require(current["tag_name"] == TAG and current["target_commitish"] == SOURCE
-                and current["body"] == release["body"], "Release changed during verification.")
-        if current["draft"]:
-            api(f"releases/{release['id']}", {"draft": False, "prerelease": True, "make_latest": "false"})
+    # Check again after downloads; never overwrite concurrent release/asset edits.
+    current = api(f"releases/{release['id']}")
+    require(current["tag_name"] == TAG and current["target_commitish"] == SOURCE
+            and current["body"] == release["body"], "Release changed during verification.")
+    require(inventory(api(f"releases/{release['id']}/assets?per_page=100")) == inventory(assets),
+            "Asset inventory changed during verification.")
+    verify_tag(allow_missing=current["draft"])
+    public_body = current["body"].replace(DRAFT_ACCESS, PUBLIC_ACCESS)
+    payload = {}
+    if current["draft"]:
+        payload.update({"draft": False, "prerelease": True, "make_latest": "false"})
+    if public_body != current["body"]:
+        payload["body"] = public_body
+    if payload:
+        api(f"releases/{release['id']}", payload)
     published = api("releases/tags/" + TAG)
-    require(not published["draft"], "Release publication did not complete.")
+    require(not published["draft"] and published["id"] == release["id"],
+            "The verified release publication did not complete.")
+    require(published["body"] == public_body and published["prerelease"],
+            "Published verification notes or release classification differ from the reviewed result.")
+    verify_tag(allow_missing=False)
     print("Public release: " + published["html_url"], flush=True)
 
 
