@@ -135,8 +135,8 @@ class Window(Gtk.ApplicationWindow):
             .section-number { color: #634fe1; font-weight: 700; }
             .pair-code { font-size: 36px; font-weight: 700; color: #4f3cc8; padding: 12px 0; }
             .nearby-row { padding: 12px; border-radius: 8px; }
-            listbox row:selected { background: #eee9fd; color: #30236f; }
-            listbox row:selected .muted { color: #4f3cc8; }
+            .boxed-list > row:selected { background: #eee9fd; color: #30236f; }
+            .boxed-list > row:selected .muted { color: #4f3cc8; }
             .pair-status { background: #f2f4f8; border-radius: 8px; padding: 12px; }
             .status { color: #646e83; padding: 4px 0; font-size: 12px; }
             .drop-zone { border: 2px dashed #aac0dc; border-radius: 12px; padding: 24px; }

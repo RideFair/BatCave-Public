@@ -35,7 +35,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y build-essential pkg-config libei-dev libeis-dev \
-            python3-gi python3-cryptography gir1.2-gtk-4.0 gir1.2-secret-1 libxkbcommon0 xkb-data xvfb dbus-x11
+            python3-gi python3-cryptography gir1.2-gtk-4.0 gir1.2-secret-1 libxkbcommon0 xkb-data xvfb dbus-x11 \
+            adwaita-icon-theme librsvg2-common
       - name: Native EIS, TLS, lifecycle state and filesystem checks
         run: sh Operating_System_Specific/Linux/scripts/test.sh
       - name: Source privacy gate
