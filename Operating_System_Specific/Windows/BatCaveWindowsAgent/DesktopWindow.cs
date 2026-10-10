@@ -238,7 +238,7 @@ internal sealed partial class DesktopWindow : Form
         StyleButton(_back); _back.Click += (_, _) =>
         {
             if (_comparison is not null) { ClosePairingWindow(); UpdateSetup(); }
-            else if (_setupStep == 1 && _addingComputer) { _addingComputer = false; UpdateSetup(); }
+            else if (_setupStep == 1 && _addingComputer) { ClosePairingWindow(); _addingComputer = false; UpdateSetup(); }
             else ShowStep(1);
         }; actions.Controls.Add(_back, 0, 0);
         StyleButton(_saveSetup); _saveSetup.Click += (_, _) => Guard(() => { if (!ReceiveInput) SaveLayout(); SaveSettings(); UpdateSetup(); });
@@ -422,7 +422,7 @@ internal sealed partial class DesktopWindow : Form
         _sharing = state.Sharing;
         var action = DesktopSetupFlow.Action(_setupStep, state);
         _start.Text = action.Label; _start.Enabled = action.Enabled;
-        _back.Visible = _setupStep != 1; _saveSetup.Visible = _setupStep == 3;
+        _back.Visible = _setupStep != 1 || _addingComputer; _saveSetup.Visible = _setupStep == 3;
         _back.Text = _setupStep == 1 && _addingComputer ? "Cancel" : "Back";
         _saveSetup.Enabled = state.PeerSelected && (state.ReceiveInput || state.LayoutValid);
         _stepTitle.Text = _setupStep == 1 ? "YOUR COMPUTERS" : "BATCAVE";
