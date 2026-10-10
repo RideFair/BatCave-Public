@@ -595,6 +595,7 @@ class Window(Gtk.ApplicationWindow):
 
 class Application(Gtk.Application):
     def __init__(self, library=None, fixture=None):
+        GLib.set_application_name("BatCave")
         super().__init__(application_id="dev.batcave.Linux.SecurePreview", flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.library, self.fixture, self.window = library, fixture, None
 
