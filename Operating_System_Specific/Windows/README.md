@@ -7,31 +7,26 @@ a patched .NET 10 SDK:
 dotnet run --project Operating_System_Specific/Windows/BatCaveWindowsAgent
 ```
 
-The same four setup screens are used on Windows, macOS, and Linux: Permissions,
-Pair computers, Arrange screens, and Link devices. Windows needs no additional
-input permission. In Pair computers, choose your other computer's platform and
-save the Windows connection file. Send it to that computer by email or USB and
-import it in BatCave there. Export that computer's file, bring it back to Windows,
-and choose Add computer. Existing files can skip the Windows export step;
-copy/paste is available if you already have a way to share text.
+## Link your computers
 
-Compare the full approval code (certificate fingerprint) with the originating
-computer's Connection details before approving. Connection files contain public
-identity information; private keys stay on their originating computers. A fresh
-profile trusts no peer. Approval selects the new computer and reveals this PC's
-local address in Pair computers. On another Windows PC, choose Connect from this
-PC instead, enter that address, and choose Connect securely. Current Mac/Linux
-packages connect from Arrange screens. Connect from only one computer, on the same
-local network.
+Open BatCave on both computers on the same local network. Choose the other
+computer from Nearby computers, compare the eight digits on both screens, and
+choose **Codes match · Link and share** on each. The computer that started linking
+supplies the keyboard and mouse. BatCave connects automatically and places the
+other screen on its right; **Arrange screens** changes that placement when needed.
+Windows needs no extra input permission. Allow BatCave on your private network if
+Windows requests network access.
 
-For two Windows PCs, install 0.2.3 on both. In Pair computers, set Keyboard and
-mouse to This PC on the source and The other computer on the receiver. Arrange
-screens on the source. In Link devices, choose Enable input on this PC on the
-receiver, then Start sharing on the source. Windows remembers each approved
-computer's role and outgoing address. Saving either never enables input.
+Nearby linking requires matching updated builds on both devices. Published 0.2.x
+installers predate this flow. This branch is being checked across Windows, Mac and
+Linux before new installers are released. Existing identities and approved peers
+are preserved. Older peers without discovery can still connect using their saved
+approved connection settings.
 
-The Mac/Linux 0.2.0 packages receive Windows input. Their native source roles need
-updated packages; choosing a platform does not add capture support to an older app.
+The approval starts only the first verified connection, within 30 seconds. A
+cancelled or interrupted request cannot start input later. If initial connection
+fails or a linked computer reconnects, choose the explicit sharing action to
+resume. There is no automatic input authorization from a saved profile.
 
 Pause, Escape, F12, disconnect, sleep, and session lock restore local control.
 Reconnect does not automatically resume sharing. Text clipboard sharing and
@@ -48,9 +43,15 @@ dotnet run --project Operating_System_Specific/Windows/ModifierRegressionTests -
 dotnet run --project Operating_System_Specific/Windows/TopologyRegressionTests -c Release
 ```
 
-These checks cover transport, held-input cleanup, setup activation and monitor
-routing. They do not replace live cross-platform tests. See
+These checks cover nearby pairing, pinned transport, held-input cleanup, explicit
+sharing consent and monitor routing. They do not replace live cross-platform tests. See
 [packaging](Packaging/README.md) for installer checks.
+
+Shared pairing vectors live in [Universal/Protocol](../../Universal/Protocol).
+The nearby service tests hold both approval prompts open, prove nothing is saved
+after one approval, and authenticate the resulting identities on the existing
+mutual TLS input channel. They also check tampered commitments, signatures,
+discovery bounds and cancellation.
 
 The Windows peer test creates two isolated protected identities and exchanges
 input over real pinned TLS in both roles. It routes an actual saved monitor

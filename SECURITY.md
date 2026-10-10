@@ -36,6 +36,28 @@ The Mac guided app connects through pinned mutual TLS. Its legacy command-line
 network path is disabled by default; explicit development access permits loopback
 only. Windows installers exclude the legacy plaintext network mode.
 
+## Nearby pairing in the updated source
+
+The published 0.2.x installers do not implement nearby pairing. The replacement
+bootstrap is specified in [Nearby pairing](Universal/Protocol/Nearby_Pairing.md)
+and remains subject to cross-platform review and physical-device validation.
+
+Nearby discovery advertises public device identity information on the local IPv4
+network. It grants no trust. A separate, time-limited TCP endpoint exchanges only
+public identity material. Fresh nonce commitments bind the comparison code to
+both identities, and separate signatures prove key possession and approval.
+Both screens must explicitly approve all eight matching digits before a peer pin
+is saved. This bootstrap carries no input and provides no confidentiality for its
+public metadata. The input connection still requires pinned mutual TLS 1.3.
+
+**Link and share** explicitly authorizes the first matching input session for
+30 seconds. That consent exists only in memory and is consumed once. Cancellation,
+Pause, navigation, role changes, lock, sleep, disconnect or session replacement
+revoke it. Reconnect does not restore it. Existing pins cannot be silently replaced
+by discovery or nearby pairing. This is not an independently audited protocol;
+shared vectors, adversarial fixtures and native interoperability checks are
+release requirements, not a substitute for external security review.
+
 ## Updates and release checks
 
 Build with a supported, patched .NET 10 SDK/runtime. Self-contained installers

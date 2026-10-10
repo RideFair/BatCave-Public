@@ -19,6 +19,9 @@ internal sealed class NearbyPairingService : IDisposable
     private CancellationTokenSource? _window, _active;
     private TcpListener? _listener;
     private Task? _acceptTask;
+    private IPAddress _listenAddress = IPAddress.Any;
+    private int _listenPort = DefaultPort;
+    internal int ListeningPort { get; private set; }
     internal event Action<string>? Failed;
     internal bool IsOpen { get { lock (_gate) return _window is { IsCancellationRequested: false }; } }
     internal bool Busy { get { lock (_gate) return _active is not null; } }
@@ -32,11 +35,9 @@ internal sealed class NearbyPairingService : IDisposable
         _confirm = confirm; _completed = completed; _onLan = onLan;
     }
 
-    internal void Start()
+    internal void Start(IPAddress? address = null, int port = DefaultPort)
     {
-        var listener = new TcpListener(IPAddress.Any, DefaultPort);
-        listener.Server.ExclusiveAddressUse = true;
-        listener.Start(4); _listener = listener; _acceptTask = AcceptAsync();
+        _listenAddress = address ?? IPAddress.Any; _listenPort = port;
     }
 
     internal void OpenWindow()
@@ -46,34 +47,43 @@ internal sealed class NearbyPairingService : IDisposable
             if (_stop.IsCancellationRequested || _active is not null) return;
             _window?.Cancel(); _window?.Dispose();
             _window = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
-            _window.CancelAfter(TimeSpan.FromSeconds(180));
+            try
+            {
+                var listener = new TcpListener(_listenAddress, _listenPort);
+                listener.Server.ExclusiveAddressUse = true; listener.Start(4); _listener = listener;
+                ListeningPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+                _window.Token.Register(listener.Stop);
+                _window.CancelAfter(TimeSpan.FromSeconds(180));
+                _acceptTask = AcceptAsync(listener, _window.Token);
+            }
+            catch { _window.Cancel(); throw; }
         }
     }
 
     internal void CloseWindow() { lock (_gate) { _window?.Cancel(); _active?.Cancel(); } }
     internal void Cancel() { lock (_gate) _active?.Cancel(); }
 
-    private async Task AcceptAsync()
+    private async Task AcceptAsync(TcpListener listener, CancellationToken window)
     {
         try
         {
-            while (!_stop.IsCancellationRequested)
+            while (!window.IsCancellationRequested)
             {
-                var client = await _listener!.AcceptTcpClientAsync(_stop.Token).ConfigureAwait(false);
+                var client = await listener.AcceptTcpClientAsync(window).ConfigureAwait(false);
                 CancellationTokenSource? session = null;
                 lock (_gate)
                 {
                     var now = DateTimeOffset.UtcNow;
                     while (_attempts.TryPeek(out var oldest) && now - oldest > TimeSpan.FromMinutes(1)) _attempts.Dequeue();
-                    if (IsOpen && _active is null && _attempts.Count < 6
+                    if (!window.IsCancellationRequested && IsOpen && _active is null && _attempts.Count < 6
                         && (_attempts.Count == 0 || now - _attempts.Last() >= TimeSpan.FromSeconds(5))
                         && client.Client.RemoteEndPoint is IPEndPoint endpoint && _onLan(endpoint.Address))
                     {
                         _attempts.Enqueue(now);
-                        session = _active = CancellationTokenSource.CreateLinkedTokenSource(_window!.Token);
+                        session = _active = CancellationTokenSource.CreateLinkedTokenSource(window);
                     }
                 }
-                if (session is null) { client.Dispose(); continue; }
+                if (session is null) { client.Dispose(); await Task.Delay(20, window).ConfigureAwait(false); continue; }
                 _ = RunAsync(client, false, session, null);
             }
         }

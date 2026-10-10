@@ -125,15 +125,15 @@ internal static partial class ModifierRegression
         WithPairingFixture((window, _, first, second) =>
         {
             window.ShowStep(1); Application.DoEvents();
-            var platforms = (ComboBox)Get(window, "_platform");
-            Require(platforms.Items.Cast<string>().SequenceEqual(new[] { "Windows", "Mac", "Linux" }), "all three other-computer platforms are offered");
+            var nearby = (ListBox)Get(window, "_nearbyList");
+            foreach (var platform in new[] { "windows", "macos", "linux" })
+                nearby.Items.Add(new NearbyComputer(platform + ":synthetic", "Example computer", platform, new string('A', 64), System.Net.IPAddress.Parse("192.0.2.20"), 47871, 47873, true, DateTimeOffset.UtcNow));
             for (var i = 0; i < 3; i++)
             {
-                platforms.SelectedIndex = i; Application.DoEvents();
-                Require(((Label)Get(window, "_sendInstructions")).Text.Contains(i == 0 ? "Windows PC" : i == 1 ? "Mac" : "Linux"), "platform choice changes the instructions");
+                nearby.SelectedIndex = i; Application.DoEvents();
+                Require(((Button)Get(window, "_start")).Text == "Link computer" && ((Button)Get(window, "_start")).Enabled, "all platforms use the same discovery and linking action");
             }
             Call(window, "ApplyApproval", first); Call(window, "UpdateSetup");
-            Require(platforms.SelectedIndex == 0, "a Windows identity selects Windows even if another platform was picked before import");
             var role = (ComboBox)Get(window, "_role"); role.SelectedIndex = 1;
             ((TextBox)Get(window, "_host")).Text = "192.0.2.20"; Call(window, "SaveSettings");
             Call(window, "ApplyApproval", second);

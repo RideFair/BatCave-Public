@@ -23,9 +23,13 @@ internal sealed class NearbyDiscovery : IDisposable
     private readonly string _localId;
     private readonly CancellationTokenSource _stop = new();
     private UdpClient? _socket;
+    private IPAddress _group = Group;
+    private int _port = DiscoveryPort;
     private LanInterface[] _interfaces = [];
+    private readonly HashSet<LanInterface> _joined = [];
     private Task? _receive, _announce;
     internal string? Error { get; private set; }
+    internal long ReceivedPackets, OffLanPackets, InvalidPackets;
 
     internal NearbyDiscovery(string localId, Func<byte[]> announcement) { _localId = localId; _announcement = announcement; }
 
@@ -90,16 +94,18 @@ internal sealed class NearbyDiscovery : IDisposable
 
     internal bool IsLocalAddress(IPAddress address) => OnLan(address, _interfaces);
 
-    internal void Start()
+    internal void Start(int port = DiscoveryPort, IPAddress? multicastGroup = null, bool loopback = false)
     {
         if (_socket is not null) return;
+        _group = multicastGroup ?? Group;
         var socket = new UdpClient(AddressFamily.InterNetwork);
         try
         {
             socket.Client.ExclusiveAddressUse = false;
             socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            socket.Client.Bind(new IPEndPoint(IPAddress.Any, DiscoveryPort));
-            socket.MulticastLoopback = false;
+            socket.Client.Bind(new IPEndPoint(IPAddress.Any, port));
+            _port = ((IPEndPoint)socket.Client.LocalEndPoint!).Port;
+            socket.MulticastLoopback = loopback;
             socket.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 1);
             _socket = socket;
             RefreshInterfaces();
@@ -111,11 +117,14 @@ internal sealed class NearbyDiscovery : IDisposable
     private void RefreshInterfaces()
     {
         var next = Interfaces();
-        foreach (var old in _interfaces.Except(next))
-            try { _socket!.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.DropMembership, new MulticastOption(Group, old.Address)); }
+        foreach (var old in _joined.Except(next).ToArray())
+        {
+            try { _socket!.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.DropMembership, new MulticastOption(_group, old.Address)); }
             catch (SocketException) { }
-        foreach (var network in next.Except(_interfaces))
-            try { _socket!.JoinMulticastGroup(Group, network.Address); }
+            _joined.Remove(old);
+        }
+        foreach (var network in next.Except(_joined))
+            try { _socket!.JoinMulticastGroup(_group, network.Address); _joined.Add(network); }
             catch (SocketException) { Error = "Network discovery could not join this network. Reconnect Wi-Fi and search again."; }
         _interfaces = next;
     }
@@ -126,15 +135,16 @@ internal sealed class NearbyDiscovery : IDisposable
         {
             while (!_stop.IsCancellationRequested)
             {
-                RefreshInterfaces();
+                Error = null; RefreshInterfaces();
                 var data = _announcement();
                 if (data.Length > 1024) throw new InvalidDataException("Discovery announcement exceeds its limit.");
+                if (_interfaces.Length == 0) Error = "Connect to a Wi-Fi or wired network to find your other computer.";
                 foreach (var network in _interfaces)
                 {
                     try
                     {
                         _socket!.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface, network.Address.GetAddressBytes());
-                        await _socket.SendAsync(data, new IPEndPoint(Group, DiscoveryPort), _stop.Token).ConfigureAwait(false);
+                        await _socket.SendAsync(data, new IPEndPoint(_group, _port), _stop.Token).ConfigureAwait(false);
                     }
                     catch (SocketException) { Error = "Nearby discovery is blocked. Allow BatCave on your private network, then search again."; }
                 }
@@ -153,14 +163,21 @@ internal sealed class NearbyDiscovery : IDisposable
             while (!_stop.IsCancellationRequested)
             {
                 var packet = await _socket!.ReceiveAsync(_stop.Token).ConfigureAwait(false);
+                Interlocked.Increment(ref ReceivedPackets);
                 var now = DateTimeOffset.UtcNow;
                 if ((now - second).TotalSeconds >= 1) { second = now; count = 0; }
-                if (++count > 64 || !IsLocalAddress(packet.RemoteEndPoint.Address)) continue;
+                if (++count > 64) { await Task.Delay(100, _stop.Token).ConfigureAwait(false); continue; }
+                if (!IsLocalAddress(packet.RemoteEndPoint.Address)) { Interlocked.Increment(ref OffLanPackets); continue; }
                 try { Remember(ReadAnnouncement(packet.Buffer, packet.RemoteEndPoint.Address, now), now); }
-                catch (Exception ex) when (ex is ArgumentException or InvalidDataException or JsonException or FormatException or InvalidOperationException or NullReferenceException) { }
+                catch (Exception ex) when (ex is ArgumentException or InvalidDataException or JsonException or FormatException or InvalidOperationException or NullReferenceException) { Interlocked.Increment(ref InvalidPackets); }
             }
         }
-        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException) { }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException) { }
+        catch (SocketException)
+        {
+            if (!_stop.IsCancellationRequested) Error = "Nearby discovery stopped. Reopen BatCave to restart it.";
+            _stop.Cancel(); _socket?.Dispose();
+        }
     }
 
     internal void Remember(NearbyComputer computer, DateTimeOffset now)

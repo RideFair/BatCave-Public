@@ -106,7 +106,7 @@ internal sealed class SetupStepButton(int step, string title, string description
         var circle = new Rectangle((int)(12 * scale), (Height - (int)(28 * scale)) / 2, (int)(28 * scale), (int)(28 * scale));
         using var circleFill = new SolidBrush(Selected ? DesktopTheme.Accent : Color.FromArgb(44, 51, 72));
         g.FillEllipse(circleFill, circle);
-        TextRenderer.DrawText(g, (step + 1).ToString(), Font, circle, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        TextRenderer.DrawText(g, step switch { 0 => "✓", 1 => "↔", 2 => "▣", _ => "▶" }, Font, circle, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         var x = (int)(51 * scale);
         using var heading = new Font(Font, FontStyle.Bold);
         using var detail = new Font(Font.FontFamily, 8.5f);

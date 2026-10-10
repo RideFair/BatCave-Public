@@ -8,6 +8,8 @@
   <ItemGroup>
     <Compile Include="../BatCaveWindowsAgent/NearbyPairingProtocol.cs" Link="NearbyPairingProtocol.cs" />
     <Compile Include="../BatCaveWindowsAgent/NearbyDiscovery.cs" Link="NearbyDiscovery.cs" />
+    <Compile Include="../BatCaveWindowsAgent/NearbyPairingService.cs" Link="NearbyPairingService.cs" />
+    <Compile Include="../BatCaveWindowsAgent/InitialSharingConsent.cs" Link="InitialSharingConsent.cs" />
     <None Include="../../../Universal/Protocol/pairing-vectors.json" Link="pairing-vectors.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../../../Universal/Protocol/pairing-vectors.json')" />
     <Compile Include="../BatCaveWindowsAgent/SecurePeerTransport.cs" Link="SecurePeerTransport.cs" />
     <Compile Include="../BatCaveWindowsAgent/DeviceIdentityStore.cs" Link="DeviceIdentityStore.cs" />

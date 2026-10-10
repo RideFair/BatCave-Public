@@ -93,7 +93,14 @@ internal static class NearbyPairingProtocol
         ValidateLabel(descriptor.Card.DeviceId); ValidateLabel(descriptor.Card.DisplayName);
         if (descriptor.InputPort is < 1 or > 65535) throw new InvalidDataException("Invalid input port.");
         DeviceIdentityStore.ReadPublicCard(DeviceIdentityStore.SerializePublicCard(descriptor.Card));
-        using var certificate = X509CertificateLoader.LoadCertificate(Convert.FromBase64String(descriptor.Card.CertificateDerBase64));
+        var der = Convert.FromBase64String(descriptor.Card.CertificateDerBase64);
+        using var certificate = X509CertificateLoader.LoadCertificate(der);
+        if (Convert.ToBase64String(der) != descriptor.Card.CertificateDerBase64 || !der.SequenceEqual(certificate.RawData))
+            throw new InvalidDataException("Invalid certificate encoding.");
+        var eku = certificate.Extensions.OfType<X509EnhancedKeyUsageExtension>().SingleOrDefault();
+        if (eku is null || !eku.EnhancedKeyUsages.Cast<Oid>().Any(o => o.Value == "1.3.6.1.5.5.7.3.1")
+            || !eku.EnhancedKeyUsages.Cast<Oid>().Any(o => o.Value == "1.3.6.1.5.5.7.3.2"))
+            throw new InvalidDataException("Identity does not support mutual TLS.");
         using var rsa = certificate.GetRSAPublicKey();
         using var ec = certificate.GetECDsaPublicKey();
         if (rsa is not null && rsa.KeySize is >= 3072 and <= 8192) return;

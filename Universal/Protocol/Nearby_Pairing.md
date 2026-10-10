@@ -124,14 +124,23 @@ or an independently audited cryptographic protocol.
 
 ## Connection and user consent
 
-After mutual approval, automatically connect to the authenticated card's input
-port at the observed socket address using unchanged pinned mutual TLS. Remember
-the role and screen arrangement. Discover address changes without changing pins.
-Navigation and reconnection never activate input. If an implementation combines
-pairing approval with starting the initial session, it must explicitly say so,
-bind that single-use consent to this pairing and the first matching authenticated
-input session, expire it after 30 seconds, and invalidate it on cancellation,
-Pause, lock, sleep or disconnect. No consent may be persisted for automatic replay.
+The approval button is **Codes match · Link and share**. Explain which computer's
+keyboard and mouse will be used (the initiator supplies input). After both approve,
+automatically connect to the authenticated card's input port at the observed socket
+address using unchanged pinned mutual TLS. Only the ordinal-lower device ID
+automatically dials; the other listens, preventing duplicate initial sessions.
+Remember the role and screen arrangement. Discovery may supply candidate addresses;
+persist reachability changes only after pinned authentication proves the peer.
+
+Explicit **Link and share** consent is single-use and memory-only: bind it to
+the exact peer ID, certificate pin and role in this pairing, and the first fresh
+matching authenticated input session/hello. Expire it after 30 seconds. Clear it
+before attempting initial activation. Cancellation, navigation, role changes,
+Pause, lock, sleep, disconnect or session replacement invalidate it immediately.
+It cannot authorize a later retry/reconnect. Request required OS input permissions
+when needed; missing permissions leave input off with an actionable explanation.
+Never persist or replay this consent. If the one-use consent has expired, the
+explicit local sharing action remains available for the connected approved peer.
 
 When discovery is blocked, explain same-network requirements and expose a retry
 action. Do not turn an empty device list into a blank dropdown or a mandatory file

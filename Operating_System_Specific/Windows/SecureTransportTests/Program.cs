@@ -8,6 +8,8 @@ using System.Text;
 using BatCave.WindowsAgent;
 
 if (args.Length == 2 && args[0] == "--write-pairing-vectors") { NearbyPairingChecks.WriteVectors(args[1]); return; }
+if (args.Length > 0 && args[0] == "--nearby-interop") { await NearbyInterop.Run(args[1..]); return; }
+if (args.Length == 1 && args[0] == "--nearby-multicast") { await NearbyPairingChecks.MulticastSmoke(); return; }
 await NearbyPairingChecks.Run();
 if (args.Length == 1 && args[0] == "--nearby-only") return;
 

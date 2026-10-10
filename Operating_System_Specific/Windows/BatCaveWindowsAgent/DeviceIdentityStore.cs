@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
+using System.Text;
 
 namespace BatCave.WindowsAgent;
 
@@ -87,8 +88,8 @@ internal sealed class DeviceIdentityStore : IDisposable
         if (System.Text.Encoding.UTF8.GetByteCount(json) > 16384) { throw new InvalidDataException("Pairing card is too large."); }
         var card = JsonSerializer.Deserialize<PairingCard>(json, JsonOptions) ?? throw new InvalidDataException("Pairing card is empty.");
         if (card.Schema != PairingCardSchema || string.IsNullOrWhiteSpace(card.DeviceId)
-            || card.DeviceId.Length > 128 || card.DeviceId.Any(char.IsControl)
-            || string.IsNullOrWhiteSpace(card.DisplayName) || card.DisplayName.Length > 128 || card.DisplayName.Any(char.IsControl)
+            || card.DeviceId.EnumerateRunes().Count() > 128 || card.DeviceId.Any(char.IsControl)
+            || string.IsNullOrWhiteSpace(card.DisplayName) || card.DisplayName.EnumerateRunes().Count() > 128 || card.DisplayName.Any(char.IsControl)
             || string.IsNullOrEmpty(card.CertificateDerBase64) || card.CertificateSha256?.Length != 64)
             throw new InvalidDataException("Unsupported or invalid pairing card.");
         using var certificate = X509CertificateLoader.LoadCertificate(Convert.FromBase64String(card.CertificateDerBase64));
