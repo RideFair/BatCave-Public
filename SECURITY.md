@@ -1,8 +1,8 @@
 # Security policy
 
 This policy describes the published source and the release checks still required.
-Windows requires authenticated transport. Secure Mac and Linux implementations
-are available in review branches; their live desktop checks remain pending.
+Windows, Mac and Linux use approved identities and authenticated transport.
+Live cross-platform and fresh-device checks remain pending.
 Older plaintext branches and packages are unsuitable for deployment.
 
 ## Trust boundary
@@ -17,7 +17,8 @@ user action.
 An approved peer can affect the user's input and optional text clipboard while
 sharing is active. Treat pairing approval like granting remote-control access.
 This design does not protect against malware already running as the same OS user.
-Device keys use the current user's Windows CNG provider with export disabled.
+Windows device keys use the current user's CNG provider with export disabled.
+Mac keys remain in Keychain; Linux keys remain in the desktop Secret Service.
 Uninstall preserves pairing state for reinstall; it does not revoke peers.
 
 Incoming JSON frames are limited to 256 KiB and decoded clipboard text to 64 KiB.
@@ -25,15 +26,15 @@ Outbound Windows queues have message and byte limits and disconnect on overflow.
 Key codes and typed text are excluded from routine logs. Local diagnostic logs
 can still identify devices and must not be uploaded without review.
 
-The Mac network listener is disabled until authenticated transport is implemented
-and reviewed. Both platforms' legacy plaintext connections are restricted to
-explicit local development. Their local experiments are not a secure release.
+The Mac guided app connects through pinned mutual TLS. Its legacy command-line
+network path is disabled by default; explicit development access permits loopback
+only. Windows installers exclude the legacy plaintext network mode.
 
 ## Updates and release checks
 
 Build with a supported, patched .NET 10 SDK/runtime. Self-contained installers
 must be rebuilt and redistributed for runtime security updates. Before a public
-binary release, complete Mac transport review, cross-platform recovery tests,
+binary release, complete cross-platform recovery tests,
 clean-device installation checks, package privacy inspection, and signing.
 
 ## Reporting

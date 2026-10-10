@@ -40,11 +40,9 @@ self-contained installer.
 
 ### macOS
 
-On macOS 13+ with a Swift 6 toolchain and macOS SDK, use the published Mac branch
-until PR #5 is integrated:
+On macOS 13+ with a Swift 6 toolchain and macOS SDK:
 
 ```sh
-git switch --track origin/codex/macos-secure-preview-20261010
 cd Operating_System_Specific/MacOS
 bash Scripts/build_setup_preview.sh
 bash Scripts/install_setup_preview.sh
@@ -52,17 +50,16 @@ bash Scripts/install_setup_preview.sh
 
 The installer creates a versioned app in your user Applications folder and a
 desktop shortcut. Open it and use the guided permission/linking screens.
-The [Mac guide](https://github.com/RideFair/BatCave-Public/blob/codex/macos-secure-preview-20261010/Operating_System_Specific/MacOS/README.md)
+The [Mac guide](Operating_System_Specific/MacOS/README.md)
 records signing and release verification status. Existing script names remain
 compatible with earlier build instructions.
 
 ### Linux
 
 Use a full Ubuntu 24.04 amd64 desktop with an unlocked desktop keyring and a
-RemoteDesktop v2 portal supporting `ConnectToEIS`. Until PR #2 is integrated:
+RemoteDesktop v2 portal supporting `ConnectToEIS`:
 
 ```sh
-git switch --track origin/codex/linux-secure-preview-20261010
 sudo apt update
 sudo apt install git build-essential pkg-config libei-dev libeis-dev python3 \
   python3-gi python3-cryptography gir1.2-gtk-4.0 gir1.2-secret-1 dbus-x11
@@ -76,7 +73,7 @@ batcave-linux-preview
 
 Packaging requires a clean committed checkout. Run the app as your normal desktop
 user. Diagnosis reports missing session support without granting input access.
-The [Linux guide](https://github.com/RideFair/BatCave-Public/blob/codex/linux-secure-preview-20261010/Operating_System_Specific/Linux/README.md)
+The [Linux guide](Operating_System_Specific/Linux/README.md)
 records live desktop checks. Package/launcher identifiers are retained for upgrades;
 use the versioned package filename produced by your checkout if it differs.
 

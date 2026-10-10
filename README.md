@@ -8,25 +8,25 @@ TLS 1.3 and must approve each other before sharing input.
 
 Get packaged downloads from [Releases](https://github.com/RideFair/BatCave-Public/releases).
 Each release lists its supported platforms and remaining limitations.
+The combined 0.2.0 installers are not published yet; follow the release checks
+below before distributing them.
 
 | Platform | Installation |
 | --- | --- |
 | Windows 11 x64 | Download the Windows Setup executable, run it, and open BatCave. The installer includes .NET; no developer tools are needed. |
-| macOS 13+ | Open the DMG and install the app as described in its release. A public Mac download is still pending; the [Mac source branch](https://github.com/RideFair/BatCave-Public/tree/codex/macos-secure-preview-20261010) provides the guided app and installer. |
-| Linux | Install the `.deb` with your software installer, then open BatCave in your desktop session. A public Linux download is still pending; the [Linux source branch](https://github.com/RideFair/BatCave-Public/tree/codex/linux-secure-preview-20261010) targets Ubuntu 24.04 amd64. |
+| macOS 13+ | Open the DMG, drag the versioned BatCave app to Applications, and open it. The versioned name keeps an existing BatCave app separate. |
+| Ubuntu 24.04 amd64 desktop | Install the `.deb` with your software installer, then open BatCave in your application launcher. |
 
 Open BatCave on both computers and follow **Permissions → Pair computers →
 Arrange screens → Link devices**. Approve the device fingerprints, position your
 screens, enable input on the receiving computer, and choose **Start sharing** on
 Windows. **Pause sharing**, Escape, or F12 returns control to Windows.
 
-The matching Mac and Linux changes are under review in
-[Mac PR #5](https://github.com/RideFair/BatCave-Public/pull/5) and
-[Linux PR #2](https://github.com/RideFair/BatCave-Public/pull/2).
-Main currently contains the Windows controller and the older disabled Mac network
-backend. Live secure Mac/Linux input and fresh-device setup still need verification
-before a completed cross-platform release can be claimed. Linux currently
-receives Windows input; it cannot control Windows.
+This source includes the Windows controller and the matching secure Mac and Linux
+apps. Live secure Mac/Linux input and fresh-device setup still need verification
+before the combined binary release. Linux currently receives Windows input;
+it cannot control Windows. WSL verifies builds and packages, but does not provide
+the desktop permission and input checks required for Linux.
 
 For source installation, see [Contributing](CONTRIBUTING.md#build-from-source).
 The [monitor guide](Docs/Monitor_Layout.md) explains placement. Network file
