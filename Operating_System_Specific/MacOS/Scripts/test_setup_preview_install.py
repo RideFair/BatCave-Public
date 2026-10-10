@@ -65,8 +65,8 @@ def snapshot(directory):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=pathlib.Path,
-                        default=SCRIPT_DIRECTORY.parent / "Build/SetupPreview/BatCave Preview.app",
-                        help="built secure preview app (default: Build/SetupPreview/BatCave Preview.app)")
+                        default=SCRIPT_DIRECTORY.parent / "Build/SetupPreview/BatCave.app",
+                        help="built BatCave app (default: Build/SetupPreview/BatCave.app)")
     options = parser.parse_args()
     require(sys.platform == "darwin", "These installer checks require macOS.")
     source = options.source.absolute()
@@ -116,7 +116,7 @@ def main():
         require(snapshot(home) == before, "Wrapper validation changed installation paths.")
         print("PASS shell wrapper source override and validation", flush=True)
 
-        app = home / "Applications" / f"BatCave Preview-{version}.app"
+        app = home / "Applications" / f"BatCave-{version}.app"
         alias = home / "Desktop" / ALIAS_NAME
         install(source, home)
         check_alias(alias, app)
@@ -133,11 +133,30 @@ def main():
             next_version = f"{prefix}-preview.999998"
         newer = variant(root / "Newer Preview.app", next_version)
         install(newer, home)
-        new_app = home / "Applications" / f"BatCave Preview-{next_version}.app"
+        new_app = home / "Applications" / f"BatCave-{next_version}.app"
         check_alias(alias, new_app)
         require(app.stat().st_ino == original_inode, "Updating the alias replaced the old app.")
         require(not list(home.rglob(".batcave-preview-install-*")), "Alias update left staging directories.")
         print("PASS atomic latest-alias update preserves previous app", flush=True)
+
+        legacy_source = variant(root / "Legacy.app", f"{prefix}-preview.999996")
+        legacy_plist = legacy_source / "Contents/Info.plist"
+        legacy_info = plistlib.loads(legacy_plist.read_bytes())
+        legacy_info["CFBundleName"] = "BatCave Preview"
+        legacy_plist.write_bytes(plistlib.dumps(legacy_info))
+        run(["/usr/bin/codesign", "--force", "--sign", "-", legacy_source])
+        legacy_home = root / "legacy-home"
+        (legacy_home / "Applications").mkdir(parents=True, mode=0o700)
+        (legacy_home / "Desktop").mkdir(mode=0o700)
+        legacy_app = legacy_home / "Applications" / f"BatCave Preview-{prefix}-preview.999996.app"
+        run(["/usr/bin/ditto", legacy_source, legacy_app])
+        legacy_alias = legacy_home / "Desktop" / ALIAS_NAME
+        run([inspector, "create", legacy_alias, legacy_app])
+        previous_app = snapshot(legacy_app)
+        install(source, legacy_home)
+        check_alias(legacy_alias, legacy_home / "Applications" / f"BatCave-{version}.app")
+        require(snapshot(legacy_app) == previous_app, "Branding upgrade changed the prior installed app.")
+        print("PASS old branded alias upgrades to BatCave while preserving the previous app", flush=True)
 
         conflicting = variant(root / "Conflicting Preview.app", next_version, build="2998")
         before = snapshot(home)

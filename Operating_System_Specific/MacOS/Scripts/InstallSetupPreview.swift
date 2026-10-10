@@ -85,7 +85,7 @@ private func checkPath(_ url: URL, directories: Bool, allowMissing: Bool = false
 }
 
 private func validatePreview(_ url: URL) throws -> PreviewIdentity {
-    guard url.pathExtension == "app" else { throw InstallError("The source must be a setup preview .app bundle.") }
+    guard url.pathExtension == "app" else { throw InstallError("The source must be a BatCave .app bundle.") }
     try checkPath(url, directories: true)
     let plistURL = url.appendingPathComponent("Contents/Info.plist")
     try checkPath(plistURL, directories: false)
@@ -94,28 +94,28 @@ private func validatePreview(_ url: URL) throws -> PreviewIdentity {
           let plist = try PropertyListSerialization.propertyList(from: plistBytes, format: nil) as? [String: Any],
           plist["CFBundleIdentifier"] as? String == previewIdentifier,
           plist["CFBundleExecutable"] as? String == "BatCaveMacOSAgent",
-          plist["CFBundleName"] as? String == "BatCave Preview",
+          ["BatCave", "BatCave Preview"].contains(plist["CFBundleName"] as? String ?? ""),
           plist["CFBundlePackageType"] as? String == "APPL",
           let flag = plist["BatCaveSetupPreview"] as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID(), flag.boolValue,
           let version = plist["BatCavePreviewVersion"] as? String,
           version.utf8.count <= 64,
-          version.range(of: #"^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}-preview\.[1-9][0-9]{0,5}$"#, options: .regularExpression) != nil,
+          version.range(of: #"^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(?:-preview\.[1-9][0-9]{0,5})?$"#, options: .regularExpression) != nil,
           let shortVersion = plist["CFBundleShortVersionString"] as? String,
-          version.hasPrefix(shortVersion + "-preview."),
+          (version == shortVersion || version.hasPrefix(shortVersion + "-preview.")),
           let build = plist["CFBundleVersion"] as? String,
           build.range(of: #"^[1-9][0-9]{0,8}$"#, options: .regularExpression) != nil else {
-        throw InstallError("The app identity, guided-preview flag or preview version is invalid.")
+        throw InstallError("The app identity, setup flag or version is invalid.")
     }
     let executable = url.appendingPathComponent("Contents/MacOS/BatCaveMacOSAgent")
     try checkPath(executable, directories: false)
     var executableInfo = stat()
     guard lstat(executable.path, &executableInfo) == 0, (executableInfo.st_mode & S_IFMT) == S_IFREG,
-          (executableInfo.st_mode & 0o111) != 0 else { throw InstallError("The preview executable is unavailable.") }
+          (executableInfo.st_mode & 0o111) != 0 else { throw InstallError("The app executable is unavailable.") }
 
     var code: SecStaticCode?
     guard SecStaticCodeCreateWithPath(url as CFURL, SecCSFlags(rawValue: 0), &code) == errSecSuccess, let code,
           SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSStrictValidate | kSecCSCheckAllArchitectures), nil) == errSecSuccess else {
-        throw InstallError("The preview signature is missing or invalid.")
+        throw InstallError("The app signature is missing or invalid.")
     }
     var signing: CFDictionary?
     guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &signing) == errSecSuccess,
@@ -127,18 +127,18 @@ private func validatePreview(_ url: URL) throws -> PreviewIdentity {
 
 private func readBoundedRegularFile(_ url: URL, maximumBytes: Int) throws -> Data {
     let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
-    guard fd >= 0 else { throw InstallError("Cannot read preview metadata.") }
+    guard fd >= 0 else { throw InstallError("Cannot read app metadata.") }
     defer { close(fd) }
     var info = stat()
     guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
-          info.st_size > 0, info.st_size <= maximumBytes else { throw InstallError("Preview metadata must be a bounded regular file.") }
+          info.st_size > 0, info.st_size <= maximumBytes else { throw InstallError("App metadata must be a bounded regular file.") }
     var data = Data(), buffer = [UInt8](repeating: 0, count: min(maximumBytes, 4096))
     while true {
         let count = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress!, $0.count) }
         if count < 0 && errno == EINTR { continue }
-        guard count >= 0 else { throw InstallError("Cannot read preview metadata.") }
+        guard count >= 0 else { throw InstallError("Cannot read app metadata.") }
         if count == 0 { break }
-        guard data.count <= maximumBytes - count else { throw InstallError("Preview metadata exceeds its size limit.") }
+        guard data.count <= maximumBytes - count else { throw InstallError("App metadata exceeds its size limit.") }
         data.append(contentsOf: buffer.prefix(count))
     }
     return data
@@ -151,14 +151,14 @@ private func bundleFingerprint(_ bundle: URL) throws -> Data {
     var entries = 0, total: Int64 = 0
     for case let url as URL in walker {
         entries += 1
-        guard entries <= 4096 else { throw InstallError("The preview bundle contains too many entries.") }
+        guard entries <= 4096 else { throw InstallError("The app bundle contains too many entries.") }
         var info = stat()
         guard lstat(url.path, &info) == 0 else { throw InstallError("The source bundle changed while being checked.") }
         let kind = info.st_mode & S_IFMT
-        guard kind == S_IFDIR || kind == S_IFREG else { throw InstallError("Links and special files are not allowed in this setup preview bundle.") }
+        guard kind == S_IFDIR || kind == S_IFREG else { throw InstallError("Links and special files are not allowed in this app bundle.") }
         if kind == S_IFREG {
             guard info.st_size >= 0, info.st_size <= 512 * 1024 * 1024,
-                  total <= 512 * 1024 * 1024 - info.st_size else { throw InstallError("The preview bundle exceeds the installation size limit.") }
+                  total <= 512 * 1024 * 1024 - info.st_size else { throw InstallError("The app bundle exceeds the installation size limit.") }
             total += info.st_size
             files.append((String(url.path.dropFirst(bundle.path.count + 1)), url, info))
         }
@@ -167,7 +167,7 @@ private func bundleFingerprint(_ bundle: URL) throws -> Data {
     for (relative, url, originalInfo) in files.sorted(by: { $0.0 < $1.0 }) {
         digest.update(data: Data("\(relative.utf8.count):\(relative):\(originalInfo.st_size):\(originalInfo.st_mode & 0o777):".utf8))
         let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-        guard fd >= 0 else { throw InstallError("Cannot read a preview bundle file.") }
+        guard fd >= 0 else { throw InstallError("Cannot read an app bundle file.") }
         defer { close(fd) }
         var current = stat()
         guard fstat(fd, &current) == 0, FileIdentity(current) == FileIdentity(originalInfo), current.st_size == originalInfo.st_size else {
@@ -177,7 +177,7 @@ private func bundleFingerprint(_ bundle: URL) throws -> Data {
         while true {
             let count = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress!, $0.count) }
             if count < 0 && errno == EINTR { continue }
-            guard count >= 0 else { throw InstallError("Cannot hash a preview bundle file.") }
+            guard count >= 0 else { throw InstallError("Cannot hash an app bundle file.") }
             if count == 0 { break }
             bytesRead += Int64(count)
             guard bytesRead <= originalInfo.st_size else { throw InstallError("The source bundle changed while being checked.") }
@@ -195,7 +195,7 @@ private struct ExistingAlias {
 
 private func validateAlias(in desktop: Directory) throws -> ExistingAlias? {
     guard let info = try desktop.info(latestName) else { return nil }
-    guard (info.st_mode & S_IFMT) == S_IFREG, info.st_size > 0, info.st_size <= 1024 * 1024 else { throw InstallError("Desktop/BatCave — Latest exists and is not a native preview alias; it was preserved.") }
+    guard (info.st_mode & S_IFMT) == S_IFREG, info.st_size > 0, info.st_size <= 1024 * 1024 else { throw InstallError("Desktop/BatCave — Latest exists and is not a native BatCave alias; it was preserved.") }
     let url = try desktop.url().appendingPathComponent(latestName)
     let properties = try url.resourceValues(forKeys: [.isAliasFileKey])
     guard properties.isAliasFile == true else { throw InstallError("Desktop/BatCave — Latest is an unrelated file; it was preserved.") }
@@ -290,7 +290,7 @@ private func run() throws {
     guard userHome.path != "/", let source = source ?? defaultSource else { throw InstallError("A valid user home and source app are required.") }
     let home = try Directory(userHome, requireOwnership: true)
     let preview = try validatePreview(source)
-    let appName = "BatCave Preview-" + preview.version + ".app"
+    let appName = "BatCave-" + preview.version + ".app"
     let applicationsURL = try home.url().appendingPathComponent("Applications", isDirectory: true)
     let desktopURL = try home.url().appendingPathComponent("Desktop", isDirectory: true)
     try checkPath(applicationsURL, directories: true, allowMissing: true)
@@ -302,12 +302,12 @@ private func run() throws {
     var alreadyInstalled = false
     if let applications, try applications.info(appName) != nil {
         guard try validatePreview(try applications.url().appendingPathComponent(appName)) == preview else {
-            throw InstallError("A different app already uses this preview version. It was preserved; build a new preview version.")
+            throw InstallError("A different app already uses this version. It was preserved; build a new version.")
         }
         alreadyInstalled = true
     }
     if validateOnly {
-        print("Validated secure setup preview \(preview.version). No installation files were written.")
+        print("Validated BatCave \(preview.version). No installation files were written.")
         print("App: \(applicationsURL.appendingPathComponent(appName).path)")
         print("Finder alias: \(desktopURL.appendingPathComponent(latestName).path)")
         return
@@ -329,13 +329,13 @@ private func run() throws {
     guard try validateAlias(in: desk)?.target.path == destination.path else {
         throw InstallError("The desktop alias changed after installation. The installed app was preserved.")
     }
-    print("\(alreadyInstalled ? "Verified existing" : "Installed") secure setup preview \(preview.version): \(destination.path)")
+    print("\(alreadyInstalled ? "Verified existing" : "Installed") BatCave \(preview.version): \(destination.path)")
     print("Native Finder alias ready: \(try desk.url().appendingPathComponent(latestName).path)")
-    print("The app was not opened. Existing preview versions and the working app were preserved.")
+    print("The app was not opened. Existing app versions and the working app were preserved.")
 }
 
 do { try run() }
 catch {
-    fputs("BatCave preview install: \(error)\n", stderr)
+    fputs("BatCave install: \(error)\n", stderr)
     exit(2)
 }

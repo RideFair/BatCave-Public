@@ -92,7 +92,7 @@ final class SetupModel: ObservableObject {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?" + pane) {
             NSWorkspace.shared.open(url)
         }
-        message = "Enable BatCave Preview in System Settings, then return here. If macOS asks you to quit, reopen the preview."
+        message = "Enable BatCave in System Settings, then return here. If macOS asks you to quit, reopen BatCave."
     }
 
     func next() {
@@ -126,7 +126,7 @@ final class SetupModel: ObservableObject {
         panel.nameFieldStringValue = "BatCave-Mac-pairing.json"
         panel.allowedContentTypes = [.json]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try identity.card.encoded().write(to: url, options: .atomic); message = "Saved your public card. Import it in the Windows preview." }
+        do { try identity.card.encoded().write(to: url, options: .atomic); message = "Saved your public card. Import it in BatCave on Windows." }
         catch { message = error.localizedDescription }
     }
 
@@ -202,7 +202,7 @@ final class SetupModel: ObservableObject {
         }
         lan?.approve(peer); save()
         lan?.connect(host: address, port: 47871, automaticallyReconnect: true)
-        message = "Open BatCave Preview on Windows, select this Mac, and keep its secure listener running."
+        message = "Open BatCave on Windows, select this Mac, and keep its secure listener running."
     }
 
     func enableInput() {
@@ -210,10 +210,10 @@ final class SetupModel: ObservableObject {
         let others = NSWorkspace.shared.runningApplications.filter {
             $0.processIdentifier != ProcessInfo.processInfo.processIdentifier && ["dev.batcave.macos-agent", "dev.batcave.setup-preview", "dev.batcave.macos-agent.secure-preview"].contains($0.bundleIdentifier ?? "")
         }
-        guard others.isEmpty else { message = "Quit the working BatCave app from its menu before enabling preview input. You can reopen it after testing."; return }
+        guard others.isEmpty else { message = "Quit the other BatCave app before enabling input here. Your existing setup remains available."; return }
         if !installed {
             installed = agent?.install(exitOnFailure: false) == true
-            guard installed else { message = "macOS has not enabled input access yet. Reopen the preview after granting both permissions."; return }
+            guard installed else { message = "macOS has not enabled input access yet. Reopen BatCave after granting both permissions."; return }
         }
         lan?.enableSecureInput(true, clipboard: clipboard)
         receiving = true
@@ -236,17 +236,17 @@ final class SetupModel: ObservableObject {
             if enabled { try SMAppService.mainApp.register() }
             else { try SMAppService.mainApp.unregister() }
             loginEnabled = SMAppService.mainApp.status == .enabled
-            if !loginEnabled && enabled { message = "Approve BatCave Preview under Login Items in System Settings." }
+            if !loginEnabled && enabled { message = "Approve BatCave under Login Items in System Settings." }
         } catch { message = "Could not change Open at login: " + error.localizedDescription }
     }
 
     func finish() {
         profile.completed = true; save()
-        message = "Setup saved. BatCave Preview stays available in the menu bar when you close this window."
+        message = "Setup saved. BatCave stays available in the menu bar when you close this window."
     }
 
     func shutdown() {
-        agent?.stop(reason: "Preview quit"); lan?.dispose(); timer?.invalidate()
+        agent?.stop(reason: "App quit"); lan?.dispose(); timer?.invalidate()
         if let sleepObserver { NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver) }
     }
 }
@@ -260,7 +260,7 @@ private struct SetupView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Image(systemName: "display.2").font(.system(size: 32)).foregroundStyle(.blue)
                     Text("BatCave").font(.system(size: 26, weight: .bold))
-                    Text("SETUP PREVIEW").font(.system(size: 10, weight: .semibold)).tracking(1.6).foregroundStyle(.secondary)
+                    Text("DEVICE SETUP").font(.system(size: 10, weight: .semibold)).tracking(1.6).foregroundStyle(.secondary)
                 }.padding(.bottom, 8)
                 ForEach(0..<4) { index in
                     HStack(spacing: 12) {
@@ -272,9 +272,9 @@ private struct SetupView: View {
                     }
                 }
                 Spacer()
-                Button { model.showFiles = true } label: { Label("Files preview", systemImage: "doc.on.doc") }
+                Button { model.showFiles = true } label: { Label("Files", systemImage: "doc.on.doc") }
                     .font(.system(size: 12))
-                Label("Separate test version", systemImage: "flask").font(.system(size: 12)).foregroundStyle(.secondary)
+                Label("Encrypted device linking", systemImage: "lock.shield").font(.system(size: 12)).foregroundStyle(.secondary)
             }.padding(28).frame(width: 215).background(Color(nsColor: .windowBackgroundColor))
             Divider()
             VStack(alignment: .leading, spacing: 18) {
@@ -326,11 +326,11 @@ private struct SetupView: View {
     }
     private var permissions: some View {
         VStack(alignment: .leading, spacing: 18) {
-            heading("One keyboard. Both computers.", "Move your Windows mouse onto your Mac and keep typing. First, give this test app the two permissions macOS requires.")
+            heading("One keyboard. Both computers.", "Move your Windows mouse onto your Mac and keep typing. First, give BatCave the two permissions macOS requires.")
             permissionRow("Accessibility", "Lets BatCave move the pointer and type on your Mac.", ready: model.accessibility, input: false)
             permissionRow("Input Monitoring", "Lets BatCave detect input and safely release held keys.", ready: model.inputMonitoring, input: true)
             Button("Check permissions again") { model.refresh() }
-            Text("Your working BatCave app can keep running during setup. Before testing input, we’ll ask you to quit it so the two apps don’t compete.")
+            Text("If another BatCave app is open, quit it before enabling input here.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
         }
     }
@@ -345,37 +345,42 @@ private struct SetupView: View {
     private var pairing: some View {
         VStack(alignment: .leading, spacing: 18) {
             heading("Pair with your Windows computer", "Exchange a public pairing card in both directions. Approve only the computer whose fingerprint you’ve checked.")
-            Text("1. Send this Mac’s card to Windows").fontWeight(.semibold)
-            HStack { Button("Save Mac card…") { model.exportCard() }; Button("Copy Mac card") { model.copyCard() } }
-            Text("2. Import the Windows card here").fontWeight(.semibold)
-            HStack { Button("Import Windows card…") { model.importCard(paste: false) }; Button("Paste Windows card") { model.importCard(paste: true) } }
+            HStack { Button("Copy Mac card") { model.copyCard() }; Button("Paste Windows card") { model.importCard(paste: true) } }
+            DisclosureGroup("Use a card file") {
+                HStack { Button("Save Mac card…") { model.exportCard() }; Button("Import Windows card…") { model.importCard(paste: false) } }
+            }
             if !model.peers.isEmpty {
                 Picker("Paired computer", selection: $model.selectedPeerId) {
                     ForEach(model.peers, id: \.deviceId) { Text($0.displayName).tag($0.deviceId) }
                 }.onChange(of: model.selectedPeerId) { _ in model.selectPeer() }
                 if let peer = model.peer {
-                    Text(peer.certificateSha256).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
                     Button("Unpair this computer", role: .destructive) { model.unpair() }
                 }
             }
             Text("Cards contain public identity information. Your private key stays in this Mac’s Keychain.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
-            if model.identityReady {
-                Text("This Mac’s fingerprint").font(.system(size: 11, weight: .medium))
-                Text(model.fingerprint).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
+            DisclosureGroup("Connection details") {
+                if model.identityReady {
+                    Text("This Mac’s fingerprint").font(.system(size: 11, weight: .medium))
+                    Text(model.fingerprint).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
+                }
+                if let peer = model.peer {
+                    Text("Paired computer’s fingerprint").font(.system(size: 11, weight: .medium))
+                    Text(peer.certificateSha256).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
+                }
             }
         }
     }
     private var layout: some View {
         VStack(alignment: .leading, spacing: 18) {
-            heading("Arrange your computers", "Match this diagram to your desk. Set the same Mac placement in the Windows preview, which controls the crossing boundary.")
+            heading("Arrange your computers", "Match this diagram to your desk. Set the same Mac placement in BatCave on Windows, which controls the crossing boundary.")
             ScreenArrangement(macOnRight: model.macOnRight, peerName: model.peer?.displayName ?? "Windows")
             Picker("The Mac sits", selection: $model.macOnRight) { Text("Left of Windows").tag(false); Text("Right of Windows").tag(true) }
                 .pickerStyle(.segmented).onChange(of: model.macOnRight) { _ in model.save() }
-            Text("This Mac has \(NSScreen.screens.count) display\(NSScreen.screens.count == 1 ? "" : "s"). This preview treats each computer’s displays as one desktop.")
+            Text("This Mac has \(NSScreen.screens.count) display\(NSScreen.screens.count == 1 ? "" : "s"). Each computer’s displays are shown as one desktop.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
             HStack { TextField("Windows local address or hostname", text: $model.host); Button(model.connected ? "Reconnect" : "Connect securely") { model.connect() }.disabled(model.host.isEmpty) }
-            Text("Find the address in the Windows preview. Both computers must be on the same local network.").font(.system(size: 12)).foregroundStyle(.secondary)
+            Text("Find the address in BatCave on Windows. Both computers must be on the same local network.").font(.system(size: 12)).foregroundStyle(.secondary)
             if model.connected { Label("Encrypted connection verified", systemImage: "lock.shield.fill").foregroundStyle(.green) }
         }
     }
@@ -389,7 +394,7 @@ private struct SetupView: View {
                 Text(model.receiving ? "Ready for Windows input" : "Input is paused").font(.system(size: 12)).foregroundStyle(.secondary)
             }
             Toggle("Share text clipboard while controlling the Mac", isOn: $model.clipboard).onChange(of: model.clipboard) { _ in model.changeClipboard() }
-            Toggle("Open BatCave Preview at login", isOn: Binding(get: { model.loginEnabled }, set: { model.login($0) }))
+            Toggle("Open BatCave at login", isOn: Binding(get: { model.loginEnabled }, set: { model.login($0) }))
             Text("Normal crossings stay quiet. Escape or F12 stops control. After a lost connection, input stays paused until you enable it again.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
         }
@@ -434,16 +439,16 @@ private final class SetupApplication: NSObject, NSApplicationDelegate {
             source.resume(); signals.append(source)
         }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 670), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "BatCave Preview — First-time setup"
+        window.title = "BatCave — Device setup"
         window.contentView = NSHostingView(rootView: SetupView(model: model))
         window.isReleasedWhenClosed = false; window.center(); window.makeKeyAndOrderFront(nil)
         self.window = window
         let menu = NSMenu()
-        for (title, action) in [("Open setup", #selector(show)), ("Files preview", #selector(files)), ("Pause input", #selector(pause)), ("Quit BatCave Preview", #selector(quit))] {
+        for (title, action) in [("Open setup", #selector(show)), ("Files", #selector(files)), ("Pause input", #selector(pause)), ("Quit BatCave", #selector(quit))] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: ""); item.target = self; menu.addItem(item)
         }
         let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        status.button?.title = "BatCave Preview"; status.menu = menu; statusItem = status
+        status.button?.title = "BatCave"; status.menu = menu; statusItem = status
         NSApp.activate(ignoringOtherApps: true)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -463,7 +468,7 @@ func runSetupPreview() {
     app.delegate = delegate
     let menu = NSMenu()
     let item = NSMenuItem(); let appMenu = NSMenu()
-    appMenu.addItem(withTitle: "Quit BatCave Preview", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+    appMenu.addItem(withTitle: "Quit BatCave", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     item.submenu = appMenu; menu.addItem(item); app.mainMenu = menu
     app.run()
     withExtendedLifetime(delegate) {}

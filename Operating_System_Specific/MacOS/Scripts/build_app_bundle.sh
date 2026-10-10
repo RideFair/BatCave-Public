@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="BatCave Preview"
+APP_NAME="BatCave"
 PRODUCT_NAME="BatCaveMacOSAgent"
 BUNDLE_IDENTIFIER="dev.batcave.macos-agent.secure-preview"
 CONFIGURATION="${CONFIGURATION:-release}"

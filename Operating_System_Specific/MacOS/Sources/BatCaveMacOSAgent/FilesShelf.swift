@@ -208,7 +208,7 @@ struct FilesShelfView: View {
     @ObservedObject var model: FilesShelfModel
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Files preview").font(.title2.bold())
+            Text("Files").font(.title2.bold())
             Text("Drop files from Finder to check their icons. This test build keeps them on this Mac.")
                 .foregroundStyle(.secondary)
             FileShelfNativeView(model: model)

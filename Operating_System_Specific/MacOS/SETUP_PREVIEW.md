@@ -1,4 +1,4 @@
-# Mac first-time setup preview
+# Mac first-time device setup
 
 This is a separate, locally signed test app for macOS 13+ on Apple Silicon.
 It does not replace the stable or development app, read their connection
@@ -73,7 +73,7 @@ the setup interface does not present self-reported checkboxes as test results.
 
 ## Local files preview
 
-Choose **Files preview** from the setup sidebar or menu bar. Drop regular files
+Choose **Files** from the setup sidebar or menu bar. Drop regular files
 from Finder into the shelf. Selection is limited to 32 files, 1 GiB per file
 and 4 GiB total. Folders, aliases and symbolic links are rejected. Original files
 stay on disk; the shelf stores references and an optional icon snapshot.

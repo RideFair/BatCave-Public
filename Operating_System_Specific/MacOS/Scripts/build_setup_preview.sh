@@ -1,12 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PREVIEW_VERSION="${BATCAVE_PREVIEW_VERSION:-0.2.0-preview.5}"
+PREVIEW_VERSION="${BATCAVE_PREVIEW_VERSION:-0.2.0}"
 PREVIEW_ARCH="$(uname -m)"
-APP_DIR="$ROOT_DIR/Build/SetupPreview/BatCave Preview.app"
+APP_DIR="$ROOT_DIR/Build/SetupPreview/BatCave.app"
 PACKAGE_DIR="${BATCAVE_PREVIEW_OUTPUT:-$ROOT_DIR/Build/SetupPreview/Packages}"
 if [[ ! "$PREVIEW_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-    echo 'Preview version must use letters, digits, dots, underscores or hyphens.' >&2
+    echo 'Version must use letters, digits, dots, underscores or hyphens.' >&2
     exit 2
 fi
 if [[ "$PACKAGE_DIR" != /* ]]; then
@@ -31,7 +31,7 @@ done
 cd "$ROOT_DIR"
 SOURCE_COMMIT="$(git rev-parse HEAD)"
 if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
-    echo 'Commit preview changes before packaging so the manifest identifies exact source.' >&2
+    echo 'Commit source changes before packaging so the manifest identifies exact source.' >&2
     exit 2
 fi
 # Reuse the public builder's physical-path and working-app preservation guards.
@@ -50,11 +50,11 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>dev.batcave.macos-agent.secure-preview</string>
 <key>CFBundleExecutable</key><string>BatCaveMacOSAgent</string>
-<key>CFBundleName</key><string>BatCave Preview</string>
+<key>CFBundleName</key><string>BatCave</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>BatCave</string>
 <key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>2005</string>
+<key>CFBundleVersion</key><string>2006</string>
 <key>BatCavePreviewVersion</key><string>$PREVIEW_VERSION</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
@@ -67,35 +67,32 @@ codesign --force --sign - "$APP_DIR"
 codesign --verify --strict "$APP_DIR"
 STAGING_DIR="$(mktemp -d "$ROOT_DIR/Build/SetupPreview/dmg.XXXXXX")"
 trap 'rm -rf "$STAGING_DIR"' EXIT
-ditto "$APP_DIR" "$STAGING_DIR/BatCave Preview.app"
+ditto "$APP_DIR" "$STAGING_DIR/BatCave.app"
 ln -s /Applications "$STAGING_DIR/Applications"
 cat > "$STAGING_DIR/Start here.txt" <<'TXT'
-BatCave Preview — first-time setup test
+BatCave
 
-1. Drag BatCave Preview to Applications, then open it.
-2. Follow Permissions → Pair computers → Arrange screens → Link devices.
-3. Export/import a public pairing card on BOTH computers and compare fingerprints.
-4. Open the matching Windows secure preview and enter its local address on Mac.
-5. Keep your working BatCave apps closed only while testing preview input.
+Drag BatCave to Applications and open it on both computers. Follow the guided
+Permissions, Pair computers, Arrange screens and Link devices screens.
+Approve each other's public device cards, then enable Mac input and choose
+Start sharing on Windows. Quit another BatCave app before enabling input here.
 
-This local test package is not Developer ID signed or notarized. If macOS blocks
-it, allow this specific preview under System Settings → Privacy & Security.
-Do not disable Gatekeeper. It requires macOS 13+ and the Mac architecture named
-in the DMG filename.
+This build is ad-hoc signed and is not notarized. If macOS blocks it, use the
+specific app's Open Anyway control in System Settings > Privacy & Security.
+Keep Gatekeeper enabled. The DMG filename identifies the required architecture;
+macOS 13 or newer is required.
 
-The preview uses separate settings and never replaces your working BatCave app.
-Text clipboard sharing and Open at login are off until you choose to enable them.
-Files preview accepts local Finder files and prepares source icons. Cross-computer
-file transfer is not enabled in this build; Send files remains disabled.
-Public-release signing, the security review, and Windows/Mac integration testing
-are still required. No release has been published.
+Existing settings and other installed apps remain separate. Clipboard sharing
+and Open at login are optional. The local Files shelf does not send files between
+computers. Live secure Windows/Mac input, fresh-install permissions and recovery
+checks remain pending; a completed cross-platform release is not yet verified.
 TXT
-DMG="$PACKAGE_DIR/BatCavePreview-$PREVIEW_VERSION-$PREVIEW_ARCH.dmg"
-hdiutil create -volname 'BatCave Preview' -srcfolder "$STAGING_DIR" -ov -format UDZO "$DMG"
+DMG="$PACKAGE_DIR/BatCave-$PREVIEW_VERSION-$PREVIEW_ARCH.dmg"
+hdiutil create -volname 'BatCave' -srcfolder "$STAGING_DIR" -ov -format UDZO "$DMG"
 (cd "$PACKAGE_DIR" && shasum -a 256 "$(basename "$DMG")") > "$DMG.sha256"
 DIRTY="$(git status --porcelain --untracked-files=normal | wc -l | tr -d ' ')"
-cat > "$PACKAGE_DIR/BatCavePreview-build.json" <<JSON
-{"version":"$PREVIEW_VERSION","architecture":"$PREVIEW_ARCH","minimumMacOS":"13.0","sourceCommit":"$SOURCE_COMMIT","sourceTreeDirty":$DIRTY,"signing":"ad-hoc local preview","notarized":false,"transport":"mutual TLS 1.3","port":47871,"fileTransfer":"local staging only; shared wire integration pending"}
+cat > "$PACKAGE_DIR/BatCave-build.json" <<JSON
+{"version":"$PREVIEW_VERSION","architecture":"$PREVIEW_ARCH","minimumMacOS":"13.0","sourceCommit":"$SOURCE_COMMIT","sourceTreeDirty":$DIRTY,"signing":"ad-hoc","notarized":false,"transport":"mutual TLS 1.3","port":47871,"fileTransfer":"local staging only; shared wire integration pending"}
 JSON
-echo "Preview app: $APP_DIR"
-echo "Installable preview: $DMG"
+echo "App: $APP_DIR"
+echo "Installer: $DMG"
