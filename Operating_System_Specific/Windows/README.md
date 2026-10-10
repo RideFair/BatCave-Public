@@ -7,15 +7,22 @@ a patched .NET 10 SDK:
 dotnet run --project Operating_System_Specific/Windows/BatCaveWindowsAgent
 ```
 
-Export this computer's public pairing card and import the other device's card
-through a trusted channel. Confirm the complete certificate fingerprint before
-approval. A fresh profile trusts no peer. The selected approved peer must connect
-using mutual TLS 1.3 on port 47871, then the user must choose Start sharing.
 The same four setup screens are used on Windows, macOS, and Linux: Permissions,
 Pair computers, Arrange screens, and Link devices. Windows needs no additional
-input permission; use Continue, copy/paste or import the other device's card,
-arrange the screen edge, and choose Start sharing. The Mac and Linux transport
-changes are in their linked review branches until integrated.
+input permission. In Pair computers, choose your other computer's platform and
+save the Windows connection file. Send it to that computer by email or USB and
+import it in BatCave there. Export that computer's file, bring it back to Windows,
+and choose Add computer. Existing files can skip the Windows export step;
+copy/paste is available if you already have a way to share text.
+
+Compare the full approval code (certificate fingerprint) with the originating
+computer's Connection details before approving. Connection files contain public
+identity information; private keys stay on their originating computers. A fresh
+profile trusts no peer. Approval selects the new computer and reveals this PC's
+local address in Pair computers. Enter that address in Arrange screens on the
+other computer and choose Connect securely. Both must use the same local network.
+Then arrange your screens, enable input on the receiver, and choose Start sharing
+on Windows. The matching Mac and Linux secure transports are included in this source.
 
 Pause, Escape, F12, disconnect, sleep, and session lock restore local control.
 Reconnect does not automatically resume sharing. Text clipboard sharing and
