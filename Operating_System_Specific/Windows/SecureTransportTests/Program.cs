@@ -7,6 +7,10 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using BatCave.WindowsAgent;
 
+if (args.Length == 2 && args[0] == "--write-pairing-vectors") { NearbyPairingChecks.WriteVectors(args[1]); return; }
+await NearbyPairingChecks.Run();
+if (args.Length == 1 && args[0] == "--nearby-only") return;
+
 await TestLegacyLoopbackOnly();
 using var serverIdentity = CreateIdentity("Windows test");
 using var clientIdentity = CreateIdentity("Mac test");
