@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PREVIEW_VERSION="${BATCAVE_PREVIEW_VERSION:-0.2.0-preview.2}"
+PREVIEW_VERSION="${BATCAVE_PREVIEW_VERSION:-0.2.0-preview.3}"
 PREVIEW_ARCH="$(uname -m)"
 APP_DIR="$ROOT_DIR/Build/SetupPreview/BatCave Preview.app"
 PACKAGE_DIR="${BATCAVE_PREVIEW_OUTPUT:-$ROOT_DIR/Build/SetupPreview/Packages}"
@@ -54,7 +54,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>BatCave</string>
 <key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>2002</string>
+<key>CFBundleVersion</key><string>2003</string>
 <key>BatCavePreviewVersion</key><string>$PREVIEW_VERSION</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
