@@ -102,6 +102,18 @@ internal static class WindowsPeerRoleChecks
             try { await b.ConnectSecureAsync("127.0.0.1", aPin, port, cancelled.Token); throw new Exception("cancelled connection accepted"); }
             catch (OperationCanceledException) { }
             Require(!b.HasPeer, "wrong pin and cancelled connects never install a peer");
+            a.Disconnect(); b.Disconnect();
+            await b.StartListeningAsync(0);
+            var bListener = (TcpListener)typeof(LanBridgePeer).GetField("_listener", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(b)!;
+            var bPort = ((IPEndPoint)bListener.LocalEndpoint).Port;
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                a.Disconnect(); b.Disconnect();
+                await Task.WhenAll(ConnectOrClose(a, bPin, bPort), ConnectOrClose(b, aPin, port));
+                await Until(() => a.HasPeer && b.HasPeer, "simultaneous outgoing connects converge on one live connection");
+                await Task.Delay(100);
+                Require(a.HasPeer && b.HasPeer, "opposite connection directions do not tear each other down");
+            }
             Console.WriteLine("PASS: two protected Windows identities connect over pinned mutual TLS, exchange input in both roles, release on return/unpair, and remain paused after reconnect; wrong pins, duplicate hello and cancelled connects fail closed.");
         }
         finally
@@ -122,6 +134,11 @@ internal static class WindowsPeerRoleChecks
             targetPosition = 0.5, targetX = 0, targetY = 100
         }])!;
         Require(await sent, "handoff frame was sent");
+    }
+    private static async Task ConnectOrClose(LanBridgePeer peer, ApprovedPeer approved, int port)
+    {
+        try { await peer.ConnectSecureAsync("127.0.0.1", approved, port); }
+        catch (IOException) { /* The non-preferred duplicate can close during TLS. */ }
     }
     private static async Task Until(Func<bool> test, string reason)
     {

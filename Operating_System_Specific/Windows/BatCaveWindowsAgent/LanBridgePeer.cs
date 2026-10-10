@@ -20,6 +20,7 @@ internal sealed class LanBridgePeer : IDisposable
     private readonly Func<ApprovedPeer[]>? _approvedPeers;
     private readonly SemaphoreSlim _handshakeSlots = new(4);
     private ApprovedPeer? _authenticatedPeer;
+    private bool _connectionIsOutgoing;
     private long _sessionGeneration;
     public long SessionGeneration => Interlocked.Read(ref _sessionGeneration);
     public bool IsSecure => _identity is not null;
@@ -167,7 +168,7 @@ internal sealed class LanBridgePeer : IDisposable
                 timeout.Token.ThrowIfCancellationRequested();
                 // Selection or approval may have changed during authentication.
                 if (!_approvedPeers!().Contains(peer)) throw new InvalidOperationException("Computer approval changed.");
-                ReplaceConnection(client, authenticatedStream, $"{host}:{port}", peer);
+                ReplaceConnection(client, authenticatedStream, $"{host}:{port}", peer, outgoing: true);
             }
         }
         catch { authenticatedStream?.Dispose(); client.Dispose(); throw; }
@@ -328,7 +329,7 @@ internal sealed class LanBridgePeer : IDisposable
         }
     }
 
-    private void ReplaceConnection(TcpClient client, Stream stream, string peerLabel, ApprovedPeer? authenticatedPeer)
+    private void ReplaceConnection(TcpClient client, Stream stream, string peerLabel, ApprovedPeer? authenticatedPeer, bool outgoing = false)
     {
         client.NoDelay = true;
         client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
@@ -339,10 +340,20 @@ internal sealed class LanBridgePeer : IDisposable
         var outbound = new OutboundQueue();
         lock (_connectionLock)
         {
-            if (_disposed)
+            if (_disposed || (authenticatedPeer is not null && !_approvedPeers!().Contains(authenticatedPeer)))
             {
+                writer.Dispose();
                 client.Dispose();
                 return;
+            }
+            if (_client is not null && authenticatedPeer is not null && _authenticatedPeer == authenticatedPeer)
+            {
+                // Both peers can dial after wake. Prefer the same socket on both
+                // sides: the lower device ID's outgoing connection. Otherwise
+                // each side can close the socket the other just selected.
+                var preferOutgoing = string.CompareOrdinal(_deviceId, authenticatedPeer.DeviceId) < 0;
+                if (_connectionIsOutgoing == preferOutgoing && outgoing != preferOutgoing)
+                { writer.Dispose(); client.Dispose(); return; }
             }
             // End the previous session before exposing its replacement. Queued input
             // belongs to one socket and must never spill into the new session.
@@ -363,6 +374,7 @@ internal sealed class LanBridgePeer : IDisposable
             _peerLabel = peerLabel;
             _peerDeviceId = null;
             _authenticatedPeer = authenticatedPeer;
+            _connectionIsOutgoing = outgoing;
             Interlocked.Increment(ref _sessionGeneration);
         }
         Console.WriteLine($"LAN TCP connected: {peerLabel}; waiting for device.hello");
