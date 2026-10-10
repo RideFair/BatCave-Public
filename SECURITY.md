@@ -38,8 +38,10 @@ clean-device installation checks, package privacy inspection, and signing.
 ## Reporting
 
 If GitHub's **Report a vulnerability** option is available, use it for private
-disclosure. Otherwise request a private contact channel from the maintainer
-without placing exploit details or sensitive data in a public issue.
+disclosure. Otherwise contact the maintainer, Tyler Harris, on X at
+[@tyler_x_harris](https://x.com/tyler_x_harris) or [@ridefair](https://x.com/ridefair)
+to arrange a private disclosure channel. Keep exploit details and sensitive data
+out of public posts and issues.
 Do not attach pairing state, keys, typed input, or unredacted local logs.
 
 ## Source publication
