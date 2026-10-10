@@ -52,6 +52,10 @@ def require(condition, description):
         raise RuntimeError(description)
 
 
+def notes_hash(body):
+    return hashlib.sha256(body.replace("\r\n", "\n").strip().encode()).hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--publish", action="store_true")
@@ -106,7 +110,7 @@ def main():
             "Staged release source differs from the reviewed commit.")
     require(isinstance(release.get("body"), str) and release["body"].strip(),
             "Existing release verification notes must be preserved.")
-    require(hashlib.sha256(release["body"].strip().encode()).hexdigest() in NOTES_HASHES,
+    require(notes_hash(release["body"]) in NOTES_HASHES,
             "Release notes differ from the reviewed notes.")
     verify_tag(allow_missing=release["draft"])
     assets = api(f"releases/{release['id']}/assets?per_page=100")
@@ -146,7 +150,9 @@ def main():
     require(inventory(api(f"releases/{release['id']}/assets?per_page=100")) == inventory(assets),
             "Asset inventory changed during verification.")
     verify_tag(allow_missing=current["draft"])
-    public_body = current["body"].replace(DRAFT_ACCESS, PUBLIC_ACCESS)
+    newline = "\r\n" if "\r\n" in current["body"] else "\n"
+    public_body = current["body"].replace(
+        DRAFT_ACCESS.replace("\n", newline), PUBLIC_ACCESS.replace("\n", newline))
     payload = {}
     if current["draft"]:
         payload.update({"draft": False, "prerelease": True, "make_latest": "false"})
