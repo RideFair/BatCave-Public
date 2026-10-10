@@ -1,0 +1,61 @@
+name: Verify source
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Check source privacy
+        run: python Scripts/check_public_source.py
+      - name: Scan history for secrets
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_windows_x64.zip'
+          $archive = Join-Path $env:RUNNER_TEMP 'gitleaks.zip'
+          Invoke-WebRequest $url -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'd29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e') { throw 'Scanner checksum mismatch' }
+          $scannerDirectory = Join-Path $env:RUNNER_TEMP 'gitleaks'
+          Expand-Archive $archive -DestinationPath $scannerDirectory
+          & (Join-Path $scannerDirectory 'gitleaks.exe') git . --log-opts=--all --redact=100 --no-banner
+          if ($LASTEXITCODE -ne 0) { throw 'History secret scan failed' }
+      - name: Build desktop app
+        run: dotnet build Operating_System_Specific/Windows/BatCaveWindowsAgent -c Release
+      - name: Bridge regressions
+        run: dotnet run --project Operating_System_Specific/Windows/BridgeRegressionTests -c Release
+      - name: Authentication and framing checks
+        run: dotnet run --project Operating_System_Specific/Windows/SecureTransportTests -c Release
+      - name: Modifier regressions
+        run: dotnet run --project Operating_System_Specific/Windows/ModifierRegressionTests -c Release
+      - name: Dependency advisory check
+        shell: pwsh
+        run: |
+          $json = dotnet package list --project Operating_System_Specific/Windows/BatCaveWindowsAgent --vulnerable --include-transitive --format json
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency advisory lookup failed' }
+          $report = $json | ConvertFrom-Json
+          $packages = $report.projects | ForEach-Object { $_.frameworks } | ForEach-Object { @($_.topLevelPackages) + @($_.transitivePackages) }
+          if (@($packages | Where-Object { $_.vulnerabilities }).Count -gt 0) { throw 'Vulnerable dependency reported' }
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compile Mac backend
+        run: swift build --package-path Operating_System_Specific/MacOS -c release
+      - name: Check bundle script syntax
+        run: bash -n Operating_System_Specific/MacOS/Scripts/*.sh
+      - name: Verify bundle destination guards
+        run: python3 Scripts/test_bundle_paths.py

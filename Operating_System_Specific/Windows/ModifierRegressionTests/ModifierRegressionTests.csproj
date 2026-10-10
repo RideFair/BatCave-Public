@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../BatCaveWindowsAgent/*.cs" Exclude="../BatCaveWindowsAgent/Program.cs" Link="Production/%(Filename)%(Extension)" />
+    <Compile Include="../../../Universal/Topology/TopologyMap.cs" Link="TopologyMap.cs" />
+  </ItemGroup>
+</Project>
