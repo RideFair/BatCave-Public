@@ -1,14 +1,14 @@
 # Mac first-time device setup
 
-This is a separate, locally signed test app for macOS 13+ on Apple Silicon.
+BatCave runs on macOS 13+ on Apple Silicon with a separate protected profile.
 It does not replace the stable or development app, read their connection
 settings, or approve their hostname-based identities.
 
-Build `Scripts/build_setup_preview.sh`. The resulting DMG contains **BatCave
-Preview.app**, an Applications shortcut, and first-run instructions. Drag the
+Build `Scripts/build_setup_preview.sh`. The resulting DMG contains **BatCave.app**,
+an Applications shortcut, and first-run instructions. Drag the
 app into Applications and open it. The build script also produces a checksum
 and source/version manifest. Developer ID signing and notarization are release
-gates; do not describe the local preview as a public-ready release.
+checks; do not claim release verification before those checks pass.
 `BATCAVE_PREVIEW_OUTPUT` may select a canonical directory inside this checkout's
 `Build` directory; paths outside it and symbolic-link destinations are refused.
 
@@ -18,7 +18,7 @@ The guided setup has four pages:
    their actual status, and continue only after both are granted.
 2. **Pair computers:** export/copy this Mac's public JSON card, import/paste
    the Windows card, and explicitly approve its full fingerprint. Import the
-   Mac card in the Windows preview as well.
+   Mac card in BatCave on Windows as well.
 3. **Arrange screens:** select whether the Mac sits left or right of Windows,
    match that setting on Windows, enter its local address, and connect securely.
    The diagram represents each computer's aggregate desktop. Individual
@@ -42,15 +42,15 @@ idle until Mac input is explicitly enabled and Windows starts a fresh handoff.
   are at most 16 KiB UTF-8 and validate their DER SHA-256 and validity dates.
 - Random device identity persists in a separate public reference file; the
   non-extractable P-256 private signing key stays in the Mac Keychain. A missing
-  key does not silently replace identity. The local unsigned preview uses
+  key does not silently replace identity. The ad-hoc signed app uses
   the macOS login Keychain; revisit stable signing/access requirements in review.
 - Hello must arrive within five seconds and match the approved card exactly.
   Input additionally requires a new handoff and explicit local enablement.
 - 256 KiB frame, 64 KiB clipboard text, 4096 messages and 1 MiB outbound limits;
   invalid fields/frames close the connection. Queues belong to one socket.
 - Clipboard callbacks recheck their connection session on the UI thread.
-  Routine preview logs do not record input or clipboard contents.
-- Preview bundle ID is `dev.batcave.macos-agent.secure-preview`, matching the
+  Routine logs do not record input or clipboard contents.
+- The retained bundle ID is `dev.batcave.macos-agent.secure-preview`, matching the
   public-candidate isolation plan. Peer cards/profile live in Application
   Support/BatCave/SecurePreview. No keys,
   pairing cards, runtime logs, or machine addresses belong in Git commits.
@@ -64,14 +64,14 @@ keys, certificate signing/expiry/tampering, TLS pin rejection, and real local
 mutual TLS with hello/ownership gating. They install no desktop event tap.
 Actual Windows `SslStream` interoperability, first install on another Mac,
 held-drag/modifier crossings, and sleep/wake still require live validation.
-Bonjour discovery and QR pairing are not part of this preview.
+Bonjour discovery and QR pairing are not implemented.
 
 For live validation, cross in both directions, type and try Shift+Arrow in a
 regular document, hold a modifier/drag across the boundary, then repeat after
 restarting Windows and after Mac sleep/wake. These checks remain release gates;
 the setup interface does not present self-reported checkboxes as test results.
 
-## Local files preview
+## Local files
 
 Choose **Files** from the setup sidebar or menu bar. Drop regular files
 from Finder into the shelf. Selection is limited to 32 files, 1 GiB per file

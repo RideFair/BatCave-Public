@@ -353,7 +353,7 @@ private struct SetupView: View {
                 Picker("Paired computer", selection: $model.selectedPeerId) {
                     ForEach(model.peers, id: \.deviceId) { Text($0.displayName).tag($0.deviceId) }
                 }.onChange(of: model.selectedPeerId) { _ in model.selectPeer() }
-                if let peer = model.peer {
+                if model.peer != nil {
                     Button("Unpair this computer", role: .destructive) { model.unpair() }
                 }
             }

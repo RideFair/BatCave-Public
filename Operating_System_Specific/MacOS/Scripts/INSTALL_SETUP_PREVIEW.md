@@ -26,8 +26,8 @@ all installer options. To select another trusted build, pass its absolute path:
 bash Scripts/install_setup_preview.sh --source '/absolute/path/BatCave.app' --validate-only
 ```
 
-The source must have the secure-preview bundle and signing identity, a true guided
-preview flag, an executable backend, and a version such as `0.2.0`.
+The source must have the retained bundle and signing identity, a true guided
+setup flag, an executable backend, and a version such as `0.2.0`.
 Its signature and bounded bundle contents are checked before copying and checked
 again in private staging. A new version is published with an exclusive atomic
 rename. Repeating installation of exactly the same version is harmless; different
@@ -80,4 +80,4 @@ and cleans them afterward. It checks validation without installation writes,
 native alias resolution, repeated installation, version updates, collision and
 unrelated-item preservation, symlink refusal, signature tampering, and unsafe
 versions. `--source '/absolute/path/BatCave.app'` selects another built
-preview. The suite does not launch any app or touch the real Desktop/Applications.
+app. The suite does not launch any app or touch the real Desktop/Applications.
