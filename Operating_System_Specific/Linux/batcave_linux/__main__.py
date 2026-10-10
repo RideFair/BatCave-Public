@@ -31,7 +31,7 @@ def diagnose():
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="BatCave Linux secure preview")
+    parser = argparse.ArgumentParser(description="BatCave for Linux")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--diagnose", action="store_true", help="Check capabilities without creating an identity or sharing input")
     args = parser.parse_args(argv)
@@ -46,7 +46,7 @@ def main(argv=None):
         from .desktop import Application
         return Application().run([sys.argv[0]])
     except (ImportError, OSError, RuntimeError, ValueError):
-        print("The Linux preview could not start. Run --diagnose to check its desktop dependencies.", file=sys.stderr)
+        print("BatCave could not start. Run --diagnose to check its desktop dependencies.", file=sys.stderr)
         return 2
 
 

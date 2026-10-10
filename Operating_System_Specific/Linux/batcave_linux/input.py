@@ -99,7 +99,7 @@ class InputSession:
             if payload.get("targetDeviceId") != self.local_id:
                 return
             if payload.get("targetDisplayId") != self.local_id + ":desktop":
-                raise ValueError("The Linux preview requires an aggregate desktop handoff.")
+                raise ValueError("BatCave for Linux requires an aggregate desktop handoff.")
             position = number(payload.get("targetPosition"), 0, 1)
             self.cursor = self.bounds.point(payload.get("targetEdge"), position)
             self.backend.start()

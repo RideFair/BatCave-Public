@@ -119,7 +119,7 @@ class SecretVault:
 
     def put(self, secret_id, value):
         if not self.api.password_store_sync(self.schema, {"identity": secret_id}, self.api.COLLECTION_DEFAULT,
-                                            "BatCave secure preview identity", value, None):
+                                            "BatCave identity", value, None):
             raise RuntimeError("The desktop keyring did not store the identity secret.")
 
     def remove(self, secret_id):

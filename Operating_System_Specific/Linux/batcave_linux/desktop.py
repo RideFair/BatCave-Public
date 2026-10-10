@@ -50,7 +50,7 @@ def card(title, explanation):
 
 class Window(Gtk.ApplicationWindow):
     def __init__(self, application, fixture=None):
-        super().__init__(application=application, title="BatCave — Linux secure preview", default_width=1000, default_height=760)
+        super().__init__(application=application, title="BatCave", default_width=1000, default_height=760)
         self.set_size_request(880, 640)
         self.state = self.identity = self.approvals = self.connection = self.input = self.portal = None
         self.inbox = Inbox()
@@ -309,7 +309,7 @@ class Window(Gtk.ApplicationWindow):
             GLib.idle_add(self._ready, state, identity, approvals)
         except Exception:
             if state: state.close()
-            GLib.idle_add(self._error, "Could not unlock the preview identity. Check your desktop keyring and private state directory; no identity was replaced.")
+            GLib.idle_add(self._error, "Could not unlock your BatCave identity. Check your desktop keyring and private state directory; no identity was replaced.")
 
     def _ready(self, state, identity, approvals):
         if self.shutting_down:
@@ -521,7 +521,7 @@ class Window(Gtk.ApplicationWindow):
     def _lifecycle_lost(self):
         self.lifecycle_ready = False
         self._suspend()
-        self.status.set_text("Desktop session services restarted. Restart this preview before sharing input again.")
+        self.status.set_text("Desktop session services restarted. Restart BatCave before sharing input again.")
 
     def _drop(self, _target, files, _x, _y):
         self._guard(lambda: self._stage_files(files.get_files()))
@@ -533,7 +533,7 @@ class Window(Gtk.ApplicationWindow):
 
     def _stage_files(self, files):
         self._stop()  # File/icon I/O cannot delay input cleanup while sharing.
-        if len(files) + len(self.files) > 32: raise ValueError("The preview shelf limit is 32 files.")
+        if len(files) + len(self.files) > 32: raise ValueError("The shelf limit is 32 files.")
         total = sum(os.fstat(fd).st_size for _, fd in self.files)
         pending = []
         try:
@@ -547,7 +547,7 @@ class Window(Gtk.ApplicationWindow):
                 if not stat.S_ISREG(info.st_mode) or not 0 <= info.st_size <= MAX_FILE:
                     raise ValueError("Choose a regular file no larger than 1 GiB.")
                 total += info.st_size
-                if total > MAX_BATCH: raise ValueError("The preview shelf limit is 4 GiB in total.")
+                if total > MAX_BATCH: raise ValueError("The shelf limit is 4 GiB in total.")
         except BaseException:
             for _, fd in pending: os.close(fd)
             raise
@@ -564,7 +564,7 @@ class Window(Gtk.ApplicationWindow):
             source.connect("prepare", lambda _source, _x, _y, file=file: Gdk.ContentProvider.new_for_value(Gdk.FileList.new_from_list([file])))
             paintable = Gtk.IconTheme.get_for_display(self.get_display()).lookup_by_gicon(icon, 64, 1, Gtk.TextDirection.NONE, Gtk.IconLookupFlags.PRELOAD)
             source.set_icon(paintable, 0, 0); row.add_controller(source); self.file_list.append(row)
-        self.status.set_text("Files staged locally with their source icons. Network file transfer is not enabled in this preview.")
+        self.status.set_text("Files staged locally with their source icons. Sending between devices is coming next.")
         self.file_status.set_text("Files staged locally with their source icons. Sending between devices is coming next.")
 
     def _clear_files(self):

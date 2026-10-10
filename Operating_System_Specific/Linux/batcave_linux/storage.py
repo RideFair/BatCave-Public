@@ -16,7 +16,7 @@ class StateDirectory:
         info = os.fstat(self.fd)
         if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             os.close(self.fd)
-            raise PermissionError("The preview state directory must be owned by you with mode 0700.")
+            raise PermissionError("The BatCave state directory must be owned by you with mode 0700.")
         self.path = path
 
     @staticmethod
@@ -33,10 +33,10 @@ class StateDirectory:
         with os.fdopen(fd, "rb") as stream:
             info = os.fstat(stream.fileno())
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
-                raise PermissionError("Preview state must be an owned regular file with mode 0600.")
+                raise PermissionError("BatCave state must be an owned regular file with mode 0600.")
             data = stream.read(limit + 1)
             if len(data) > limit:
-                raise ValueError("Preview state exceeds its size limit.")
+                raise ValueError("BatCave state exceeds its size limit.")
             return data
 
     def write(self, name, data, replace=True):

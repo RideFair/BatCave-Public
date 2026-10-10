@@ -34,7 +34,7 @@ def leaf_name(value):
 def icon_preview(data):
     """Accept small static 8-bit PNG; discard all ancillary metadata before decode."""
     if not isinstance(data, bytes) or not 45 <= len(data) <= MAX_ICON or data[:8] != b"\x89PNG\r\n\x1a\n":
-        raise ValueError("Icon preview must be a PNG no larger than 32 KiB.")
+        raise ValueError("File icon must be a PNG no larger than 32 KiB.")
     offset, chunks, compressed, dimensions, ended = 8, [], bytearray(), None, False
     while offset < len(data):
         if offset + 12 > len(data):
@@ -52,7 +52,7 @@ def icon_preview(data):
                 raise ValueError("Invalid PNG header order.")
             width, height, depth, color, compression, filtering, interlace = struct.unpack(">IIBBBBB", payload)
             if not 1 <= width <= 128 or not 1 <= height <= 128 or depth != 8 or color not in (0, 2, 4, 6) or (compression, filtering, interlace) != (0, 0, 0):
-                raise ValueError("Icon preview must be a static 8-bit PNG at most 128 by 128.")
+                raise ValueError("File icon must be a static 8-bit PNG at most 128 by 128.")
             dimensions = width, height, {0: 1, 2: 3, 4: 2, 6: 4}[color]
         elif dimensions is None:
             raise ValueError("PNG header must come first.")
@@ -95,7 +95,7 @@ class Offer:
             raise ValueError("Invalid transfer ID.")
         leaf_name(self.name)
         if type(self.size) is not int or not 0 <= self.size <= MAX_FILE:
-            raise ValueError("The preview file limit is 1 GiB.")
+            raise ValueError("The file limit is 1 GiB.")
         if not isinstance(self.sha256, str) or not re.fullmatch(r"[a-f0-9]{64}", self.sha256):
             raise ValueError("Invalid file digest.")
         if self.icon is not None:

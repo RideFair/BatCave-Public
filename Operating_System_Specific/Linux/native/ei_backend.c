@@ -42,7 +42,7 @@ struct bc_context *bc_open(int fd) {
     if (!ctx) return NULL;
     ctx->ei = ei_new_sender(NULL);
     if (!ctx->ei) { free(ctx); return NULL; }
-    ei_configure_name(ctx->ei, "BatCave Linux Secure Preview");
+    ei_configure_name(ctx->ei, "BatCave");
     int owned_fd = fcntl(fd, F_DUPFD_CLOEXEC, 3);
     if (owned_fd < 0 || ei_setup_backend_fd(ctx->ei, owned_fd) != 0) { bc_close(ctx); return NULL; }
     return ctx;
