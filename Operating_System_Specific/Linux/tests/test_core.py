@@ -221,7 +221,9 @@ class CoreTests(unittest.TestCase):
             # Trust only a different, otherwise valid certificate.
             context = tls_context(self.identity, self.identity.card)
             with socket.create_connection(("127.0.0.1", port), timeout=2) as raw:
-                with self.assertRaises(ssl.SSLError): context.wrap_socket(raw, server_hostname="batcave.local")
+                # TLS alerts may surface as a reset when the peer closes promptly.
+                with self.assertRaises((ssl.SSLError, ConnectionResetError)):
+                    context.wrap_socket(raw, server_hostname="batcave.local")
             worker.join(5)
 
     def test_raw_socket_without_client_certificate_is_rejected(self):
