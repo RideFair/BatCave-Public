@@ -32,6 +32,11 @@ responds with `file.channelReady` containing that schema, `port: 47872`, random
 128-bit `channelId`, and a cryptographically random 256-bit base64url `ticket`.
 The ticket is single-use, expires after 60 seconds, and is bound to the approved
 peer and exact active control-session generation. Do not log or persist it.
+Allow one pending ticket and one bound bulk socket per control session, at most
+four concurrent TLS handshakes per listener, and one pending request from a client.
+Consume a ticket atomically only after the matching pinned TLS identity supplies
+a valid first frame. Concurrent or later replay must fail. Close an old bound
+socket and cancel its batches before allowing a replacement.
 
 The first bulk message, within five seconds of TLS establishment, is
 `file.channelOpen`: channel schema, channel ID, ticket and the sender's `deviceId`.
@@ -49,7 +54,8 @@ future negotiated channel and cannot take ownership of this file socket.
 ## Wire flow
 
 Keep the `batcave.input.v0` envelope and bounded newline-delimited JSON framing.
-Every file message contains a random session-scoped `transferId`. Initially allow
+Every batch message contains a random session-scoped `transferId`; channel
+handshake messages have no batch yet and do not contain one. Initially allow
 one batch in each direction, at most 32 regular files, 1 GiB per file and 4 GiB per
 batch. Directories, links and special files are not supported in this first version.
 
@@ -67,15 +73,72 @@ batch. Directories, links and special files are not supported in this first vers
 
 One chunk may be outstanding per direction on bulk. Prioritize cancel over file
 chunks; no unbounded file queue or buffering entire files in memory.
+File data starts only for explicitly accepted IDs. IDs must be unique; an
+acceptance is a nonempty subset of the offer. Complete one file before starting
+the next in that batch. Zero-byte files go directly from acceptance to finish.
+An ack's `nextOffset` must equal the exact end of the last outstanding chunk;
+duplicates or mismatches are protocol failures. All size/offset sums use checked
+64-bit integers. Hash before offering off the input/UI thread.
 Cancel on session replacement, disconnect, unpair, lock, sleep or application exit.
 Reconnect leaves transfers idle; resume is outside v1. Unexpected IDs, offsets,
 oversized base64 or excess data reject the transfer. Do not expose local paths
 in errors, acknowledgements or logs. Source changes during hashing/reading cancel
 the transfer rather than deliver a file with an incorrect announced hash.
 
+Timeouts: channel request 10 seconds; TLS/first channel frame 5 seconds; pending
+offer acceptance 120 seconds; chunk acknowledgement 10 seconds; finish/completion
+60 seconds; otherwise no-progress bulk idle 30 seconds. Acceptance/completion
+use their own deadlines instead of the general idle deadline. Cancel expired
+batch state and owned staging; idle channels close while input stays connected.
+Initial throughput cap is 1 MiB/s per direction with a 64 KiB maximum token-bucket
+burst, configurable downward. Never increase it automatically without input
+latency testing. Separate sockets do not guarantee prompt delivery on a saturated
+network; pause bulk when control delivery stalls and test emergency release under
+load before enabling transfer. File hashing, decoding and disk I/O cannot run on
+the native input-hook thread.
+
+## Payload examples and encodings
+
+These are payloads inside the normal envelope, keyed below by message type for
+reference. UUIDs are canonical lowercase UUIDv4 strings. A `deviceId` remains the
+exact approved card ID. SHA-256 is 64 lowercase hex characters. Chunk/PNG data uses
+standard padded base64; a ticket is 32 random bytes encoded as unpadded base64url
+(43 ASCII characters). The repetitive sample ticket/IDs below are examples only;
+production values require a cryptographically secure generator.
+
+```json
+{
+  "file.channelRequest": { "channelSchema": "batcave.file.channel.v1" },
+  "file.channelReady": { "channelSchema": "batcave.file.channel.v1", "channelId": "11111111-1111-4111-8111-111111111111", "port": 47872, "ticket": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" },
+  "file.channelOpen": { "channelSchema": "batcave.file.channel.v1", "channelId": "11111111-1111-4111-8111-111111111111", "ticket": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "deviceId": "approved-device-id" },
+  "file.channelOpened": { "channelId": "11111111-1111-4111-8111-111111111111" },
+  "file.offer": { "transferId": "22222222-2222-4222-8222-222222222222", "entries": [ { "fileId": "33333333-3333-4333-8333-333333333333", "name": "example.txt", "sizeBytes": 0, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" } ] },
+  "file.accept": { "transferId": "22222222-2222-4222-8222-222222222222", "acceptedFileIds": [ "33333333-3333-4333-8333-333333333333" ] },
+  "file.reject": { "transferId": "22222222-2222-4222-8222-222222222222", "reason": "user_declined" },
+  "file.chunk": { "transferId": "22222222-2222-4222-8222-222222222222", "fileId": "33333333-3333-4333-8333-333333333333", "offset": 0, "data": "aGVsbG8=" },
+  "file.chunkAck": { "transferId": "22222222-2222-4222-8222-222222222222", "fileId": "33333333-3333-4333-8333-333333333333", "nextOffset": 5 },
+  "file.finish": { "transferId": "22222222-2222-4222-8222-222222222222", "fileId": "33333333-3333-4333-8333-333333333333" },
+  "file.complete": { "transferId": "22222222-2222-4222-8222-222222222222", "fileId": "33333333-3333-4333-8333-333333333333" },
+  "file.cancel": { "transferId": "22222222-2222-4222-8222-222222222222", "reason": "cancelled" },
+  "file.icon": { "transferId": "22222222-2222-4222-8222-222222222222", "fileId": "33333333-3333-4333-8333-333333333333", "iconPreview": { "format": "image/png", "data": "<base64 PNG>" } }
+}
+```
+
+The chunk/ack shapes above illustrate a nonempty file; the empty-file offer skips
+them. Icon data is illustrative, not a valid PNG. The outer `sourceDeviceId`
+always matches the pinned peer; channel open's `deviceId` must match it as well.
+The server enforces ticket expiry with its own monotonic deadline.
+
+Reason codes are `user_declined`, `unsupported`, `invalid_offer`, `invalid_name`,
+`too_large`, `busy`, `timeout`, `cancelled`, `source_changed`,
+`destination_unavailable`, `name_collision`, `integrity_failure`, `protocol_error`,
+`session_closed`, and `io_error`. No free-form remote error text or local paths.
+Reject malformed channel opens by closing bulk without affecting authenticated
+input. Protocol failures on bulk cancel its batches and close that socket.
+
 ## Receiving safely
 
-Treat the offered name as untrusted. Accept a plain basename, at most 255 UTF-8
+Treat the offered name as untrusted. Accept a plain basename, at most 240 UTF-8
 bytes; refuse traversal, separators, drive/stream syntax, control characters,
 reserved device names and platform-invalid endings. The receiver may propose a
 safe local name. Never accept an absolute path or hidden destination from a peer.
@@ -87,6 +150,8 @@ with a bounded buffer and running SHA-256. Verify final length and hash, then
 commit on the same filesystem without overwriting an existing destination. A name
 collision requires a user-approved new name. Cleanup removes only this transfer's
 owned staging files. A received file is never opened or executed automatically.
+Show the chosen receiver name before acceptance, including any explicitly approved
+suffix. A collision discovered later requires another user decision or cancellation.
 
 ## File icons during drag and transfer
 
@@ -95,7 +160,9 @@ The optional offer's `iconPreview` descriptor is
 with actual dimensions and compressed byte size. A separate `file.icon` carries
 `iconPreview: { "format": "image/png", "data": "<base64>" }` matching that hash.
 Send at most one icon per offered file. A receiver may show native icons until
-the preview arrives and retain only a bounded 128 KiB preview cache. Do not put
+the preview arrives and retain only a bounded 128 KiB preview cache. This counts
+encoded PNG plus decoded RGBA (`width × height × 4`); evict before decoding and
+bound visible shelf entries separately. Do not put
 all raster data in the offer: a batch could exceed the frame limit.
 Capture the source file's visible icon locally and convert it to a PNG of at most
 128 × 128 pixels and 32 KiB encoded bytes. Strip metadata before sending; no source
@@ -104,7 +171,10 @@ the network. The original file contents remain unchanged.
 
 Validate the decoded size and PNG dimensions before allocating an image. Enforce
 a decoded pixel budget, normalize through the platform image decoder, and reject
-malformed previews. Use the preview only as passive artwork in the drag overlay
+malformed previews. Descriptor dimensions, encoded size and hash must match exactly.
+Missing or malformed optional icons fall back without cancelling valid file
+content. Frame-limit/unknown-transfer protocol violations still close bulk.
+Use the preview only as passive artwork in the drag overlay
 and transfer list; fall back to a native file-type icon if unsupported. The first
 version does not alter the destination file's association or install custom icons.
 Persistent custom per-file icons need a separately reviewed native metadata adapter.
