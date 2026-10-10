@@ -3,7 +3,9 @@
 This branch adds a Linux receiver for a Windows-controlled BatCave session.
 The network and native input code run on Linux, and automated tests exercise
 real mutual TLS and the real libei protocol against an isolated EIS service.
-A supported live desktop and Windows/Linux interoperability still need testing.
+A supported live desktop and Windows/Linux input crossings still need testing.
+The Windows CNG/SChannel transport and Linux/OpenSSL client passed a real mutual
+TLS 1.3 handshake and identity-bound hello exchange through a local WSL interface.
 This is a development preview, not a verified daily-use Linux release.
 
 ## Desktop requirements
@@ -44,6 +46,11 @@ available for a later reinstall; it does not reset trusted peers silently.
 Use `batcave-linux-preview --diagnose` to check prerequisites without creating an
 identity, connecting to a peer or requesting input permission. To run from source,
 build first and use `python3 -m batcave_linux` in this directory.
+
+CI installs and removes the Debian package on a disposable Ubuntu runner, checks
+the installed version and confirms that removal preserves existing user state.
+This checks packaging; a fresh physical desktop's first-run keyring and permission
+dialogs still need testing. Only amd64 has been tested so far.
 
 ## Pair and share
 
@@ -115,6 +122,23 @@ local addresses are not logged. Startup disables core dumps.
 
 Before a release, test a real supported desktop's consent/revocation, keyboard
 layout, multi-monitor scaling, physical interruption, lock/sleep, held-input
-cleanup and Windows/Linux crossings. Add actual cross-platform TLS interoperability
-evidence, clean-device install/uninstall tests and the agreed file-transfer path.
+cleanup and Windows/Linux crossings. Test a clean physical desktop's setup and
+the agreed file-transfer path.
 Security/core tests and a GTK screenshot do not substitute for those checks.
+
+## Optional Windows/Linux transport check
+
+`tests/windows_interop` links the existing Windows identity and TLS transport
+source without modifying it. Build its project with the Windows .NET 10 SDK.
+Run the resulting DLL with a fresh empty exchange directory and the Windows
+interface address reachable from the Linux test environment. Then run
+`linux_peer.py <exchange-directory> <windows-address>` on Linux, with this Linux
+source directory on `PYTHONPATH`. The exchange directory must be reachable by
+both test processes; the supplied listener address binds only that interface and
+the port is chosen by the OS. Do not expose the test listener to an untrusted network.
+
+The test exchanges disposable public cards, uses a temporary encrypted Linux
+identity and deletes its temporary Windows certificate and CNG key on exit.
+It times out after 30 seconds, sends no input and never opens an installed app's
+profile. Keep its exchange directory out of source archives. This optional test
+is separate from automated EIS/portal fixtures and live compositor verification.
