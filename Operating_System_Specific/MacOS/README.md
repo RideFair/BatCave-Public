@@ -1,33 +1,31 @@
-# Mac agent development
+# BatCave on macOS
 
-This source snapshot retains the macOS input backend for development. Its
-network listener is disabled and outbound connections are refused by default
-until the authenticated Mac transport is implemented and reviewed. It is not
-a supported network-sharing app.
+The guided app uses Permissions, Pair computers, Arrange screens and Link devices.
+It connects to explicitly approved Windows devices using pinned mutual TLS 1.3.
 
-On macOS 13 or newer with Swift 6:
+Build from a clean checkout on macOS 13+ with Swift 6 and a macOS SDK:
 
-```bash
-swift build --package-path Operating_System_Specific/MacOS -c release
+```sh
+bash Operating_System_Specific/MacOS/Scripts/build_setup_preview.sh
+bash Operating_System_Specific/MacOS/Scripts/install_setup_preview.sh
 ```
 
-`Scripts/build_app_bundle.sh` creates `Build/Preview/BatCave Preview.app` with
-a separate bundle identity and configuration under `BatCave/SecurePreview`.
-It refuses to overwrite the preserved stable and development bundles.
-Ad-hoc signing is not Developer ID signing or
-notarization and is unsuitable for a public installer release.
+The installer creates a versioned app in your user Applications folder and the
+BatCave — Latest desktop shortcut. Open the app and follow the guided setup.
+Older apps and device identities remain available. Build script and profile
+identifiers retain their existing names for compatibility.
 
-Input capture and injection require Input Monitoring and Accessibility permission
-for the development app or terminal in System Settings. Grant these permissions
-only to builds you trust.
+See [setup](SETUP_PREVIEW.md) and [installation](Scripts/INSTALL_SETUP_PREVIEW.md)
+for technical details. The DMG identifies its architecture and includes a checksum.
+The package is ad-hoc signed, without Developer ID signing or notarization.
+Actual secure Windows/Mac input, first-install permissions and recovery still
+need live verification before a completed cross-platform release can be claimed.
 
-An explicit `--insecure-loopback-development` flag permits connections to literal
-loopback destinations for local experiments. Clipboard sharing additionally
-requires `--share-clipboard` and is disabled by default. Neither flag enables
-plaintext LAN access. Routine logs omit typed text and key codes.
+Accessibility and Input Monitoring grants are required for input. Pairing exchanges
+public cards; private keys remain in Keychain. Reconnection leaves input paused.
+Clipboard sharing and opening at login are optional. The Files shelf keeps source
+icons locally; network file transfer and audio are disabled in this build.
 
-The existing private development apps are separate from this source snapshot.
-The preview requires its own OS permission approval. Install it alongside the
-working app; pause the working app before a live input-sharing test.
-macOS build verification and secure Windows/macOS interoperability must pass
-before producing a supported Mac package.
+Run `swift test --package-path Operating_System_Specific/MacOS` for regression
+checks and `python3 Operating_System_Specific/MacOS/Scripts/test_setup_preview_install.py`
+after packaging for disposable installation-preservation checks.

@@ -46,7 +46,9 @@ for path in paths:
         findings.append((relative, "local artifact"))
     data = path.read_bytes()
     if b"\0" in data:
-        if path.suffix.lower() not in {".ico", ".icns"}:
+        approved_icon_png = (relative.as_posix() == "Operating_System_Specific/MacOS/Resources/BatCave.png"
+                             and data.startswith(b"\x89PNG\r\n\x1a\n"))
+        if path.suffix.lower() not in {".ico", ".icns"} and not approved_icon_png:
             findings.append((relative, "unexpected binary"))
         texts = [data.decode("latin1"), data.decode("utf-16-le", errors="ignore")]
     else:

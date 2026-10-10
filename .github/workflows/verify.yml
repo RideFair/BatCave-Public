@@ -57,7 +57,23 @@ jobs:
           persist-credentials: false
       - name: Compile Mac backend
         run: swift build --package-path Operating_System_Specific/MacOS -c release
+      - name: Mac input, identity, TLS and file regressions
+        run: swift test --package-path Operating_System_Specific/MacOS
       - name: Check bundle script syntax
-        run: bash -n Operating_System_Specific/MacOS/Scripts/*.sh
+        run: |
+          for script in Operating_System_Specific/MacOS/Scripts/*.sh; do
+            bash -n "$script"
+          done
       - name: Verify bundle destination guards
         run: python3 Scripts/test_bundle_paths.py
+      - name: Build isolated Mac setup installer
+        run: bash Operating_System_Specific/MacOS/Scripts/build_setup_preview.sh
+      - name: Verify versioned installation and desktop alias preservation
+        run: python3 Operating_System_Specific/MacOS/Scripts/test_setup_preview_install.py
+      - name: Upload Mac installer and manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: BatCave-macOS-${{ runner.arch }}
+          path: Operating_System_Specific/MacOS/Build/SetupPreview/Packages/*
+          if-no-files-found: error
+          retention-days: 14

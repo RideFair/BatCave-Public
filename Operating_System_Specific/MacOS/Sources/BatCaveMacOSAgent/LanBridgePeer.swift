@@ -1,5 +1,6 @@
 import Foundation
 @preconcurrency import Network
+import Security
 
 private let batCaveProtocolName = "batcave.input.v0"
 
@@ -8,6 +9,7 @@ private struct JSONPayload: @unchecked Sendable {
 }
 
 protocol LanBridgeRemoteInputReceiver: AnyObject {
+    func lanPeer(_ peer: LanBridgePeer, didDisconnect reason: String)
     func lanPeer(_ peer: LanBridgePeer, didReceiveTestStart message: RemoteTestStartMessage, sourceDeviceId: String)
     func lanPeer(_ peer: LanBridgePeer, didReceiveTestStop message: RemoteTestStopMessage, sourceDeviceId: String)
     func lanPeer(_ peer: LanBridgePeer, didReceiveCursorHandoff message: CursorHandoffMessage, sourceDeviceId: String)
@@ -105,10 +107,7 @@ private struct ScreenBoundsPayload {
 final class LanBridgePeer: @unchecked Sendable {
     static let defaultPort: UInt16 = 47870
     private let allowInsecureLoopback: Bool
-
-    init(allowInsecureLoopback: Bool = false) {
-        self.allowInsecureLoopback = allowInsecureLoopback
-    }
+    private let allowLegacyClipboard: Bool
 
     private let queue = DispatchQueue(label: "BatCaveMacOSAgent.LanBridgePeer")
     private let deviceName = {
@@ -127,18 +126,87 @@ final class LanBridgePeer: @unchecked Sendable {
     private var localBounds = ScreenBoundsPayload(DisplayBounds(minX: 0, maxX: 0, minY: 0, maxY: 0))
     private var receiveBuffer = Data()
     private var disposed = false
+    private var reconnectEndpoint: (host: String, port: UInt16)?
+    private var reconnectTask: DispatchWorkItem?
+    private var reconnectAttempt = 0
+    private var connectionReady = false
+    let secureIdentity: PairingIdentity?
+    private var approvedCard: PairingCard?
+    private var authenticatedDeviceId: String?
+    private var secureReceiveEnabled = false
+    private var secureOwnership = false
+    private var clipboardEnabled = false
+    private var outgoing = [Data]()
+    private var outgoingBytes = 0
+    private var sending = false
+    private var lastFailure: String?
+    private var sessionId = UUID().uuidString
     weak var remoteInputReceiver: LanBridgeRemoteInputReceiver?
 
-    var localDeviceId: String {
-        "macos:\(deviceName)"
+    init(secureIdentity: PairingIdentity? = nil, allowInsecureLoopback: Bool = false, allowLegacyClipboard: Bool = false) {
+        self.secureIdentity = secureIdentity
+        self.allowInsecureLoopback = allowInsecureLoopback
+        self.allowLegacyClipboard = allowLegacyClipboard
     }
 
-    var hasPeer: Bool {
+    var localDeviceId: String {
+        secureIdentity?.card.deviceId ?? "macos:\(deviceName)"
+    }
+
+    var statusDescription: String {
         queue.sync {
-            guard let connection else { return false }
-            if case .ready = connection.state { return true }
-            return false
+            if secureIdentity != nil {
+                if authenticatedDeviceId != nil { return secureReceiveEnabled ? "Ready for sharing" : "Connected securely · input paused" }
+                if let lastFailure { return lastFailure }
+                return connection == nil ? "Not connected" : "Connecting securely…"
+            }
+            if connectionReady { return "Connected: \(peerLabel ?? "peer")" }
+            if let endpoint = reconnectEndpoint { return "Waiting for Windows: \(endpoint.host):\(endpoint.port)" }
+            return connection == nil ? "Disconnected" : "Connecting: \(peerLabel ?? "peer")"
         }
+    }
+
+    var isAuthenticated: Bool { queue.sync { authenticatedDeviceId != nil } }
+    var isSecureInputEnabled: Bool { queue.sync { authenticatedDeviceId != nil && secureReceiveEnabled } }
+
+    func approve(_ card: PairingCard?) {
+        queue.async {
+            self.reconnectEndpoint = nil
+            self.reconnectTask?.cancel(); self.reconnectTask = nil
+            if let connection = self.connection { self.clearConnectionIfCurrent(connection, reason: "Pairing changed", reconnect: false) }
+            self.approvedCard = card
+            self.lastFailure = nil
+        }
+    }
+
+    func enableSecureInput(_ enabled: Bool, clipboard: Bool = false) {
+        queue.async {
+            self.secureReceiveEnabled = enabled
+            self.clipboardEnabled = clipboard
+            if !enabled {
+                self.secureOwnership = false
+                self.remoteInputReceiver?.lanPeer(self, didDisconnect: "Sharing paused")
+            }
+        }
+    }
+
+    func stopConnecting() {
+        queue.async {
+            self.reconnectEndpoint = nil
+            self.reconnectTask?.cancel(); self.reconnectTask = nil
+            if let connection = self.connection { self.clearConnectionIfCurrent(connection, reason: "Disconnected", reconnect: false) }
+        }
+    }
+
+    // Called from the UI/clipboard thread, never while this transport queue is held.
+    func clipboardSession() -> String? {
+        queue.sync { clipboardSessionOnReceiverQueue() }
+    }
+
+    // Input receiver callbacks execute on the serial connection queue.
+    func clipboardSessionOnReceiverQueue() -> String? {
+        guard secureIdentity != nil else { return allowLegacyClipboard && connectionReady ? sessionId : nil }
+        return clipboardEnabled && secureReceiveEnabled && secureOwnership && authenticatedDeviceId != nil ? sessionId : nil
     }
 
     func updateLocalBounds(_ bounds: DisplayBounds) {
@@ -157,30 +225,89 @@ final class LanBridgePeer: @unchecked Sendable {
     }
 
     func startListening(port: UInt16 = LanBridgePeer.defaultPort) {
-        emit("Network listener disabled: the authenticated Mac transport is not released.")
+        emit("Network listeners are disabled; use the approved TLS connector.")
     }
 
-    func connect(host: String, port: UInt16 = LanBridgePeer.defaultPort) {
-        guard allowInsecureLoopback && ["localhost", "127.0.0.1", "::1"].contains(host.lowercased()) else {
-            emit("Connection refused: authenticated Mac transport is pending; explicit loopback development only.")
+    func connect(host: String, port: UInt16 = LanBridgePeer.defaultPort, automaticallyReconnect: Bool = false) {
+        guard secureIdentity != nil || (allowInsecureLoopback && Self.isLiteralLoopback(host)) else {
+            emit("Connection refused: use secure pairing, or explicit loopback development only.")
             return
         }
+        // Do not let a modified localhost resolver route plaintext off-device.
+        let target = secureIdentity == nil && host.lowercased() == "localhost" ? "127.0.0.1" : host
         queue.async {
             guard !self.disposed else {
                 emit("LAN connect unavailable: peer disposed")
                 return
             }
 
-            guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-                emit("LAN connect failed: invalid TCP port \(port)")
+            self.reconnectTask?.cancel()
+            self.reconnectTask = nil
+            self.reconnectAttempt = 0
+            self.reconnectEndpoint = automaticallyReconnect ? (target, port) : nil
+            self.connectOnQueue(host: target, port: port)
+        }
+    }
+
+    private static func isLiteralLoopback(_ host: String) -> Bool {
+        ["localhost", "127.0.0.1", "::1"].contains(host.lowercased())
+    }
+
+    private static func tcpParameters() -> NWParameters {
+        let tcp = NWProtocolTCP.Options()
+        tcp.noDelay = true
+        tcp.enableKeepalive = true
+        tcp.keepaliveIdle = 5
+        tcp.keepaliveInterval = 2
+        tcp.keepaliveCount = 3
+        tcp.connectionTimeout = 5
+        tcp.connectionDropTime = 10
+        return NWParameters(tls: nil, tcp: tcp)
+    }
+
+    private func connectOnQueue(host: String, port: UInt16) {
+        guard !disposed, let nwPort = NWEndpoint.Port(rawValue: port), port > 0 else { return }
+        guard secureIdentity != nil || (allowInsecureLoopback && Self.isLiteralLoopback(host)) else { return }
+        var parameters = Self.tcpParameters()
+        if let identity = secureIdentity {
+            guard let approvedCard, let localIdentity = sec_identity_create(identity.identity) else {
+                lastFailure = "Approve the Windows pairing card first"
                 return
             }
-
-            emit("LAN connecting to \(host):\(port)...")
-            let target = host.lowercased() == "localhost" ? "127.0.0.1" : host
-            let connection = NWConnection(host: NWEndpoint.Host(target), port: nwPort, using: .tcp)
-            self.replaceConnection(connection, peerLabel: "\(host):\(port)")
+            let tls = NWProtocolTLS.Options()
+            sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv13)
+            sec_protocol_options_set_max_tls_protocol_version(tls.securityProtocolOptions, .TLSv13)
+            sec_protocol_options_set_local_identity(tls.securityProtocolOptions, localIdentity)
+            sec_protocol_options_set_verify_block(tls.securityProtocolOptions, { _, trust, complete in
+                let ref = sec_trust_copy_ref(trust).takeRetainedValue()
+                guard let chain = SecTrustCopyCertificateChain(ref) as? [SecCertificate], let leaf = chain.first else { complete(false); return }
+                complete(approvedCard.matches(leaf))
+            }, queue)
+            parameters = NWParameters(tls: tls, tcp: parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options ?? .init())
         }
+        lastFailure = nil
+        emit("LAN connecting to \(host):\(port)...")
+        let candidate = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: parameters)
+        replaceConnection(candidate, peerLabel: "\(host):\(port)")
+        // NWConnection can remain in .waiting indefinitely, even with TCP timeout options.
+        queue.asyncAfter(deadline: .now() + 8) { [weak self, weak candidate] in
+            guard let self, let candidate, self.connection === candidate, !self.connectionReady else { return }
+            self.clearConnectionIfCurrent(candidate, reason: "connection attempt timed out")
+        }
+    }
+
+    private func scheduleReconnect() {
+        guard !disposed, let endpoint = reconnectEndpoint, reconnectTask == nil else { return }
+        let delay = min(pow(2.0, Double(min(reconnectAttempt, 4))), 10.0)
+        reconnectAttempt += 1
+        emit("LAN reconnect in \(Int(delay))s to \(endpoint.host):\(endpoint.port)")
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, !self.disposed else { return }
+            self.reconnectTask = nil
+            self.connectOnQueue(host: endpoint.host, port: endpoint.port)
+        }
+        reconnectTask = task
+        queue.asyncAfter(deadline: .now() + delay, execute: task)
     }
 
     func publishEdgeHandoff(edge: String, virtualX: Int, virtualY: Int, deltaX: Int, deltaY: Int, bounds: DisplayBounds) {
@@ -197,7 +324,7 @@ final class LanBridgePeer: @unchecked Sendable {
     }
 
     func publishClipboardText(_ text: String) {
-        guard text.utf8.count <= 65536 else { return }
+        guard text.utf8.count <= 64 * 1024 else { return }
         let payload: [String: Any] = [
             "format": "text/plain",
             "text": text
@@ -212,6 +339,14 @@ final class LanBridgePeer: @unchecked Sendable {
         }
     }
 
+    func disconnect(reason: String) {
+        queue.async {
+            if let connection = self.connection {
+                self.clearConnectionIfCurrent(connection, reason: reason)
+            }
+        }
+    }
+
     func dispose() {
         shutdownLock.lock()
         defer {
@@ -220,10 +355,14 @@ final class LanBridgePeer: @unchecked Sendable {
 
         queue.async {
             self.disposed = true
+            self.reconnectEndpoint = nil
+            self.reconnectTask?.cancel()
+            self.reconnectTask = nil
             self.listener?.cancel()
             self.listener = nil
-            self.connection?.cancel()
-            self.connection = nil
+            if let connection = self.connection {
+                self.clearConnectionIfCurrent(connection, reason: "transport disposed")
+            }
             self.peerLabel = nil
             self.listenPort = nil
             self.receiveBuffer.removeAll(keepingCapacity: false)
@@ -231,7 +370,16 @@ final class LanBridgePeer: @unchecked Sendable {
     }
 
     private func replaceConnection(_ newConnection: NWConnection, peerLabel: String) {
-        connection?.cancel()
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        if let connection {
+            clearConnectionIfCurrent(connection, reason: "peer replaced", reconnect: false)
+        }
+        connectionReady = false
+        sessionId = UUID().uuidString
+        authenticatedDeviceId = nil
+        secureReceiveEnabled = false
+        secureOwnership = false
         receiveBuffer.removeAll(keepingCapacity: true)
 
         connection = newConnection
@@ -258,13 +406,23 @@ final class LanBridgePeer: @unchecked Sendable {
 
         switch state {
         case .ready:
+            connectionReady = true
+            reconnectAttempt = 0
             emit("LAN peer connected: \(peerLabel)")
             sendDeviceHelloOnQueue()
+            if secureIdentity != nil {
+                queue.asyncAfter(deadline: .now() + 5) { [weak self, weak connection] in
+                    guard let self, let connection, self.connection === connection, self.authenticatedDeviceId == nil else { return }
+                    self.clearConnectionIfCurrent(connection, reason: "Windows did not send an authenticated hello")
+                }
+            }
         case .failed(let error):
             emit("LAN peer failed \(peerLabel): \(error)")
-            clearConnectionIfCurrent(connection)
+            clearConnectionIfCurrent(connection, reason: "connection failed: \(error)")
         case .cancelled:
-            clearConnectionIfCurrent(connection)
+            clearConnectionIfCurrent(connection, reason: "connection cancelled")
+        case .waiting(let error):
+            clearConnectionIfCurrent(connection, reason: "connection waiting: \(error)")
         default:
             break
         }
@@ -285,22 +443,17 @@ final class LanBridgePeer: @unchecked Sendable {
                     self.receiveBuffer.append(data)
                     self.drainReceiveBuffer()
                     guard self.connection === activeConnection else { return }
-                    if self.receiveBuffer.count > 262144 {
-                        emit("LAN frame exceeds 256 KiB; ending development session")
-                        self.clearConnectionIfCurrent(activeConnection)
-                        return
-                    }
                 }
 
                 if let error {
                     emit("LAN receive failed from \(peerLabel): \(error)")
-                    self.clearConnectionIfCurrent(activeConnection)
+                    self.clearConnectionIfCurrent(activeConnection, reason: "receive failed: \(error)")
                     return
                 }
 
                 if isComplete {
                     emit("LAN peer disconnected: \(peerLabel)")
-                    self.clearConnectionIfCurrent(activeConnection)
+                    self.clearConnectionIfCurrent(activeConnection, reason: "peer disconnected")
                     return
                 }
 
@@ -312,10 +465,7 @@ final class LanBridgePeer: @unchecked Sendable {
     private func drainReceiveBuffer() {
         while let newlineIndex = receiveBuffer.firstIndex(of: 0x0A) {
             let lineData = receiveBuffer[..<newlineIndex]
-            guard lineData.count <= 262144 else {
-                if let connection { clearConnectionIfCurrent(connection) }
-                return
-            }
+            if lineData.count > 256 * 1024 { rejectFrame("Message exceeds 256 KB"); return }
             receiveBuffer.removeSubrange(...newlineIndex)
 
             guard !lineData.isEmpty else {
@@ -326,16 +476,21 @@ final class LanBridgePeer: @unchecked Sendable {
                 logReceivedMessage(line)
             } else {
                 emit("LAN RX invalid utf8 bytes=\(lineData.count)")
-                if let connection { clearConnectionIfCurrent(connection) }
-                return
+                rejectFrame("Invalid UTF-8 message"); return
             }
+            if connection == nil { return }
         }
+        if receiveBuffer.count > 256 * 1024 { rejectFrame("Message exceeds 256 KB") }
+    }
+
+    private func rejectFrame(_ reason: String) {
+        if let connection { clearConnectionIfCurrent(connection, reason: reason) }
     }
 
     private func sendDeviceHelloOnQueue() {
         let payload: [String: Any] = [
             "deviceId": localDeviceId,
-            "deviceName": deviceName,
+            "deviceName": secureIdentity?.card.displayName ?? deviceName,
             "operatingSystem": "macOS",
             "agentName": "BatCave.MacOSAgent",
             "virtualDesktopBounds": localBounds.dictionary
@@ -352,9 +507,14 @@ final class LanBridgePeer: @unchecked Sendable {
     }
 
     private func sendMessageOnQueue(type: String, payload: [String: Any]) {
-        guard let connection else {
+        guard let connection, connectionReady else {
             return
         }
+        if secureIdentity != nil && type != "device.hello" {
+            guard authenticatedDeviceId != nil else { return }
+            if type == "clipboard.text" && !(clipboardEnabled && secureReceiveEnabled && secureOwnership) { return }
+        }
+        if type == "clipboard.text", clipboardSessionOnReceiverQueue() == nil { return }
 
         let envelope: [String: Any] = [
             "protocol": batCaveProtocolName,
@@ -367,18 +527,52 @@ final class LanBridgePeer: @unchecked Sendable {
 
         do {
             var data = try JSONSerialization.data(withJSONObject: envelope)
-            guard data.count <= 262144 else { clearConnectionIfCurrent(connection); return }
+            guard data.count <= 256 * 1024 else {
+                clearConnectionIfCurrent(connection, reason: "Outgoing message exceeds 256 KB"); return
+            }
             data.append(0x0A)
-            connection.send(content: data, completion: .contentProcessed { error in
-                if let error {
-                    emit("LAN send \(type) failed: \(error)")
-                } else {
-                    emit("LAN TX \(type) to \(self.peerLabel ?? "peer")")
+            if secureIdentity != nil {
+                guard data.count <= 256 * 1024 + 1, outgoing.count < 4096, outgoingBytes + data.count <= 1024 * 1024 else {
+                    clearConnectionIfCurrent(connection, reason: "Outgoing message limit exceeded"); return
+                }
+                outgoing.append(data); outgoingBytes += data.count
+                sendNext(connection)
+                return
+            }
+
+            if type == "clipboard.text" {
+                guard allowLegacyClipboard && connectionReady else { return }
+                guard readString(payload, "text").utf8.count <= 64 * 1024 else { rejectFrame("Clipboard exceeds 64 KB"); return }
+            }
+            connection.send(content: data, completion: .contentProcessed { [weak self, weak connection] error in
+                guard let self, let connection else { return }
+                self.queue.async {
+                    guard self.connection === connection else { return }
+                    if let error {
+                        emit("LAN send \(type) failed: \(error)")
+                        self.clearConnectionIfCurrent(connection, reason: "send failed: \(error)")
+                    } else {
+                        emit("LAN TX \(type) to \(self.peerLabel ?? "peer")")
+                    }
                 }
             })
         } catch {
             emit("LAN serialize \(type) failed: \(error.localizedDescription)")
         }
+    }
+
+    private func sendNext(_ candidate: NWConnection) {
+        guard connection === candidate, !sending, let data = outgoing.first else { return }
+        sending = true
+        candidate.send(content: data, completion: .contentProcessed { [weak self, weak candidate] error in
+            guard let self, let candidate else { return }
+            self.queue.async {
+                guard self.connection === candidate else { return }
+                if let error { self.clearConnectionIfCurrent(candidate, reason: "Send failed: \(error)"); return }
+                self.outgoing.removeFirst(); self.outgoingBytes -= data.count; self.sending = false
+                self.sendNext(candidate)
+            }
+        })
     }
 
     private func logReceivedMessage(_ json: String) {
@@ -398,26 +592,98 @@ final class LanBridgePeer: @unchecked Sendable {
             let source = readString(root, "sourceDeviceId")
 
             guard protocolName == batCaveProtocolName else {
+                if secureIdentity != nil { rejectFrame("Unsupported protocol"); return }
                 emit("LAN RX unsupported protocol=\(protocolName) type=\(type) from \(source)")
                 return
             }
 
             guard let payload = root["payload"] as? [String: Any] else {
+                if secureIdentity != nil { rejectFrame("Missing message payload"); return }
                 emit("LAN RX \(type) from \(source) missing payload")
                 return
             }
 
+            if secureIdentity != nil {
+                guard let approvedCard, source == approvedCard.deviceId else { rejectFrame("Peer identity mismatch"); return }
+                if type == "device.hello" {
+                    guard readString(payload, "deviceId") == source else { rejectFrame("Peer hello identity mismatch"); return }
+                    authenticatedDeviceId = source
+                    lastFailure = nil
+                    return
+                }
+                guard authenticatedDeviceId == source else { rejectFrame("Hello required before messages"); return }
+                guard validSecurePayload(type: type, payload: payload) else { rejectFrame("Invalid message fields"); return }
+                if type == "control.testStop" {
+                    secureOwnership = false
+                } else if type == "cursor.handoff" {
+                    guard secureReceiveEnabled else { return }
+                    secureOwnership = readString(payload, "targetDeviceId") == localDeviceId
+                } else if type.hasPrefix("input.") {
+                    guard secureReceiveEnabled && secureOwnership else { return }
+                } else if type == "clipboard.text" {
+                    guard clipboardEnabled && secureReceiveEnabled && secureOwnership else { return }
+                    guard readString(payload, "text").utf8.count <= 64 * 1024 else { rejectFrame("Clipboard exceeds 64 KB"); return }
+                } else if type == "control.testStart" {
+                    guard secureReceiveEnabled else { return }
+                }
+                // Routine secure logs never record key codes, text, or clipboard data.
+                handleActionMessage(type: type, sourceDeviceId: source, payload: payload)
+                return
+            }
+
+            if type == "clipboard.text" {
+                guard allowLegacyClipboard && connectionReady else { return }
+                guard readString(payload, "text").utf8.count <= 64 * 1024 else { rejectFrame("Clipboard exceeds 64 KB"); return }
+            }
             if shouldLogMessage(type) {
                 emit("LAN RX \(type) from \(source): \(describePayload(type: type, payload: payload))")
             }
             handleActionMessage(type: type, sourceDeviceId: source, payload: payload)
         } catch {
             emit("LAN RX invalid json bytes=\(data.count)")
+            if secureIdentity != nil { rejectFrame("Invalid JSON message") }
         }
     }
 
     private func shouldLogMessage(_ type: String) -> Bool {
         type != "input.mouseDelta" && type != "input.key"
+    }
+
+    private func validSecurePayload(type: String, payload: [String: Any]) -> Bool {
+        func integer(_ key: String, limit: Int = 1_000_000) -> Bool {
+            guard let value = payload[key] as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() else { return false }
+            let n = value.doubleValue
+            return n.isFinite && n.rounded() == n && abs(n) <= Double(limit)
+        }
+        func boolean(_ key: String) -> Bool {
+            guard let value = payload[key] as? NSNumber else { return false }
+            return CFGetTypeID(value) == CFBooleanGetTypeID()
+        }
+        func label(_ key: String, max: Int = 256) -> Bool {
+            guard let value = payload[key] as? String else { return false }
+            return !value.isEmpty && value.utf8.count <= max && !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+        }
+        switch type {
+        case "input.mouseDelta": return integer("deltaX") && integer("deltaY")
+        case "input.mouseWheel": return integer("verticalDelta") && integer("horizontalDelta")
+        case "input.mouseButton":
+            return ["left", "right", "middle", "center", "x1", "x2"].contains(readString(payload, "button")) && boolean("isDown")
+        case "input.key":
+            return integer("virtualKey", limit: 65535) && readInt(payload, "virtualKey") >= 0
+                && integer("scanCode", limit: 65535) && readInt(payload, "scanCode") >= 0
+                && boolean("isKeyUp") && boolean("isExtended")
+                && (payload["text"] == nil || payload["text"] is NSNull || (payload["text"] as? String).map { $0.utf8.count <= 8192 } == true)
+        case "input.shortcut": return ["selectAll", "copy", "paste", "cut"].contains(readString(payload, "action"))
+        case "cursor.handoff":
+            guard label("targetDeviceId", max: 128), label("targetDisplayId"), integer("targetX"), integer("targetY"),
+                  let position = payload["targetPosition"] as? NSNumber else { return false }
+            return ["left", "right", "top", "bottom"].contains(readString(payload, "targetEdge"))
+                && position.doubleValue.isFinite && (0...1).contains(position.doubleValue)
+        case "clipboard.text": return readString(payload, "format") == "text/plain" && payload["text"] is String && readString(payload, "text").utf8.count <= 64 * 1024
+        case "control.testStart": return integer("durationSeconds", limit: 86400) && readInt(payload, "durationSeconds") > 0
+        case "control.testStop": return label("reason", max: 1024)
+        default: return true // Unknown capabilities are ignored, never injected.
+        }
     }
 
     private func handleActionMessage(type: String, sourceDeviceId: String, payload: [String: Any]) {
@@ -603,9 +869,9 @@ final class LanBridgePeer: @unchecked Sendable {
         let scanCode = readInt(payload, "scanCode")
         let isKeyUp = readBool(payload, "isKeyUp")
         let isExtended = readBool(payload, "isExtended")
-        let text = escapeForLog(readString(payload, "text"))
+        let textLength = readOptionalString(payload, "text")?.count ?? 0
 
-        return String(format: "vk=0x%X scan=0x%X up=%@ extended=%@ text=%@", virtualKey, scanCode, String(isKeyUp), String(isExtended), text)
+        return String(format: "vk=0x%X scan=0x%X up=%@ extended=%@ textLength=%d", virtualKey, scanCode, String(isKeyUp), String(isExtended), textLength)
     }
 
     private func describeShortcutInput(_ payload: [String: Any]) -> String {
@@ -687,14 +953,23 @@ final class LanBridgePeer: @unchecked Sendable {
             .replacingOccurrences(of: "\t", with: "\\t")
     }
 
-    private func clearConnectionIfCurrent(_ activeConnection: NWConnection) {
+    private func clearConnectionIfCurrent(_ activeConnection: NWConnection, reason: String, reconnect: Bool = true) {
         guard connection === activeConnection else {
             return
         }
 
         connection = nil
+        connectionReady = false
+        authenticatedDeviceId = nil
+        secureReceiveEnabled = false
+        secureOwnership = false
+        outgoing.removeAll(); outgoingBytes = 0; sending = false
+        lastFailure = secureIdentity == nil ? nil : "Connection lost · \(reason)"
         peerLabel = nil
         receiveBuffer.removeAll(keepingCapacity: true)
+        activeConnection.cancel()
+        remoteInputReceiver?.lanPeer(self, didDisconnect: reason)
+        if reconnect { scheduleReconnect() }
     }
 
     private func currentTimestamp() -> String {

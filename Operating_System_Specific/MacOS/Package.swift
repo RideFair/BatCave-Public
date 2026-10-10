@@ -22,6 +22,10 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("Network")
             ]
+        ),
+        .testTarget(
+            name: "BatCaveMacOSAgentTests",
+            dependencies: ["BatCaveMacOSAgent"]
         )
     ]
 )
