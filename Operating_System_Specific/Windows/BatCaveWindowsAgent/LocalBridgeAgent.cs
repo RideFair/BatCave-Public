@@ -381,7 +381,9 @@ internal sealed class LocalBridgeAgent : Form
 
     private void HandleRemoteShortcutInput(string sourceDeviceId, ShortcutInputPayload payload)
     {
-        if (string.Equals(sourceDeviceId, _lan.LocalDeviceId, StringComparison.OrdinalIgnoreCase)
+        // Secure shortcuts use the receiver's local-enable/ownership gate below.
+        // The legacy shortcut-only route must not bypass the selected input role.
+        if (_lan.IsSecure || string.Equals(sourceDeviceId, _lan.LocalDeviceId, StringComparison.OrdinalIgnoreCase)
             || IsDisposed
             || !IsHandleCreated)
         {
@@ -390,7 +392,7 @@ internal sealed class LocalBridgeAgent : Form
 
         QueueRemoteAction(sourceDeviceId, _lan.SessionGeneration, 64, () =>
         {
-            if ((!_lan.IsSecure || _bridgeActive) && _activeTarget == ActiveTarget.Local)
+            if (_activeTarget == ActiveTarget.Local)
                 ApplyRemoteShortcutInput(sourceDeviceId, payload);
         });
     }

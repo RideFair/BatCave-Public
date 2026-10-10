@@ -27,6 +27,7 @@ internal static partial class ModifierRegression
         void Send(string type, JsonElement data) => receiver.Handle("windows:sender", 7, type, data);
         void Enable() => receiver.Enable("windows:sender", 7, new(0, 0, 1920, 1080));
         Send("cursor.handoff", Handoff("windows:receiver")); Send("input.key", Key(65));
+        Send("input.shortcut", Payload(new { action = "paste" }));
         Require(sink.Events.Count == 0, "network traffic cannot enable receiving");
         Enable(); Send("input.key", Key(65));
         receiver.Handle("windows:sender", 6, "cursor.handoff", Handoff("windows:receiver"));
@@ -75,6 +76,10 @@ internal static partial class ModifierRegression
             Set(lan, "_writer", new StreamWriter(Stream.Null)); Set(lan, "_peerDeviceId", first.DeviceId);
             using var agent = new LocalBridgeAgent(lan, inspectionOnly: true, inputSink: sink);
             _ = agent.Handle;
+            Set(agent, "_bridgeActive", true);
+            Call(agent, "HandleRemoteShortcutInput", first.DeviceId, new ShortcutInputPayload("paste"));
+            Require((int)Get(agent, "_pendingRemoteActions") == 0, "secure source role cannot use the legacy shortcut path to inject on this PC");
+            Set(agent, "_bridgeActive", false);
             var receiver = (WindowsInputReceiver)Get(agent, "_receiver");
             void Enable() { agent.EnableReceiving(); receiver.Enable(first.DeviceId, lan.SessionGeneration, new(0, 0, 1920, 1080)); }
             void Queue(string type, JsonElement data) => Call(agent, "HandleRemoteInputMessage", first.DeviceId, lan.SessionGeneration, type, data);
