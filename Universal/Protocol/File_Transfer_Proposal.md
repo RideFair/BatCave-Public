@@ -58,6 +58,8 @@ Every batch message contains a random session-scoped `transferId`; channel
 handshake messages have no batch yet and do not contain one. Initially allow
 one batch in each direction, at most 32 regular files, 1 GiB per file and 4 GiB per
 batch. Directories, links and special files are not supported in this first version.
+Pending offers count toward the one-batch-per-direction limit before consent;
+reject additional offers as busy without creating more state or staging files.
 
 | Message | Payload |
 | --- | --- |
@@ -147,7 +149,10 @@ Create an owned temporary regular file in the chosen directory with exclusive
 creation. Use directory-relative operations and link/reparse-point defenses for
 the platform; do not follow a substituted destination. Write sequential chunks
 with a bounded buffer and running SHA-256. Verify final length and hash, then
-commit on the same filesystem without overwriting an existing destination. A name
+commit on the same filesystem without overwriting an existing destination.
+Before committing, re-read and hash the stored bytes from the same owned staging
+descriptor and revalidate its identity. The incoming-stream hash alone is not
+proof of the bytes on disk. A name
 collision requires a user-approved new name. Cleanup removes only this transfer's
 owned staging files. A received file is never opened or executed automatically.
 Show the chosen receiver name before acceptance, including any explicitly approved
