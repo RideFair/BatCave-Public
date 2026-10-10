@@ -167,6 +167,7 @@ final class LanBridgePeer: @unchecked Sendable {
     }
 
     var isAuthenticated: Bool { queue.sync { authenticatedDeviceId != nil } }
+    var isSecureInputEnabled: Bool { queue.sync { authenticatedDeviceId != nil && secureReceiveEnabled } }
 
     func approve(_ card: PairingCard?) {
         queue.async {

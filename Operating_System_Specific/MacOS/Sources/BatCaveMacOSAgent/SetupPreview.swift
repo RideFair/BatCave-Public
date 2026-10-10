@@ -32,10 +32,6 @@ final class SetupModel: ObservableObject {
     @Published var connected = false
     @Published var receiving = false
     @Published var clipboard = false
-    @Published var typedText = ""
-    @Published var testCrossing = false
-    @Published var testTyping = false
-    @Published var testRecovery = false
     @Published var loginEnabled = false
     @Published var identityReady = false
     private var profile = PreviewProfile()
@@ -85,7 +81,7 @@ final class SetupModel: ObservableObject {
         if let lan {
             connected = lan.isAuthenticated
             status = lan.statusDescription
-            if !connected { receiving = false }
+            receiving = lan.isSecureInputEnabled
         }
     }
 
@@ -257,7 +253,7 @@ final class SetupModel: ObservableObject {
 
 private struct SetupView: View {
     @ObservedObject var model: SetupModel
-    private let steps = ["Permissions", "Pair computers", "Arrange screens", "Try it out"]
+    private let steps = ["Permissions", "Pair computers", "Arrange screens", "Link devices"]
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 30) {
@@ -293,7 +289,7 @@ private struct SetupView: View {
                         case 0: permissions
                         case 1: pairing
                         case 2: layout
-                        default: testing
+                        default: linking
                         }
                         if let message = model.message {
                             Label(message, systemImage: "info.circle").font(.system(size: 12)).foregroundStyle(.secondary)
@@ -306,7 +302,7 @@ private struct SetupView: View {
                     if model.step > 0 { Button("Back") { model.step -= 1; model.message = nil } }
                     Spacer()
                     if model.step < 3 {
-                        Button(model.step == 2 ? "Try sharing" : "Continue") { model.next() }
+                        Button(model.step == 2 ? "Link devices" : "Continue") { model.next() }
                             .buttonStyle(.borderedProminent)
                             .disabled(model.step == 0 ? !model.permissionsReady : model.step == 1 ? model.peer == nil : !model.connected)
                     } else {
@@ -383,21 +379,15 @@ private struct SetupView: View {
             if model.connected { Label("Encrypted connection verified", systemImage: "lock.shield.fill").foregroundStyle(.green) }
         }
     }
-    private var testing: some View {
+    private var linking: some View {
         VStack(alignment: .leading, spacing: 16) {
-            heading("Give it a try", "Enable input here, then choose Start sharing on Windows. Move through the shared edge and type in the box below.")
+            heading("Link devices", "Enable Mac input here, then choose Start sharing on Windows. Move your mouse through the shared edge to use your Mac.")
             HStack {
                 if !model.connected { Button("Reconnect") { model.connect() }.disabled(model.peer == nil || model.host.isEmpty) }
                 Button(model.receiving ? "Pause Mac input" : "Enable Mac input") { if model.receiving { model.pause() } else { model.enableInput() } }
                     .buttonStyle(.borderedProminent).disabled(!model.connected || !model.permissionsReady)
                 Text(model.receiving ? "Ready for Windows input" : "Input is paused").font(.system(size: 12)).foregroundStyle(.secondary)
             }
-            TextEditor(text: $model.typedText).font(.system(size: 14)).frame(height: 88).padding(6)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
-                .accessibilityLabel("Type here from your Windows keyboard")
-            Toggle("I crossed onto the Mac and back", isOn: $model.testCrossing)
-            Toggle("Typing and Shift + Arrow work", isOn: $model.testTyping)
-            Toggle("I reconnected after restarting the Windows app", isOn: $model.testRecovery)
             Toggle("Share text clipboard while controlling the Mac", isOn: $model.clipboard).onChange(of: model.clipboard) { _ in model.changeClipboard() }
             Toggle("Open BatCave Preview at login", isOn: Binding(get: { model.loginEnabled }, set: { model.login($0) }))
             Text("Normal crossings stay quiet. Escape or F12 stops control. After a lost connection, input stays paused until you enable it again.")

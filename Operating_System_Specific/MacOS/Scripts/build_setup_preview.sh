@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PREVIEW_VERSION="${BATCAVE_PREVIEW_VERSION:-0.2.0-preview.4}"
+PREVIEW_VERSION="${BATCAVE_PREVIEW_VERSION:-0.2.0-preview.5}"
 PREVIEW_ARCH="$(uname -m)"
 APP_DIR="$ROOT_DIR/Build/SetupPreview/BatCave Preview.app"
 PACKAGE_DIR="${BATCAVE_PREVIEW_OUTPUT:-$ROOT_DIR/Build/SetupPreview/Packages}"
@@ -54,7 +54,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>BatCave</string>
 <key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>2004</string>
+<key>CFBundleVersion</key><string>2005</string>
 <key>BatCavePreviewVersion</key><string>$PREVIEW_VERSION</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
@@ -73,14 +73,15 @@ cat > "$STAGING_DIR/Start here.txt" <<'TXT'
 BatCave Preview — first-time setup test
 
 1. Drag BatCave Preview to Applications, then open it.
-2. Follow Permissions → Pair computers → Arrange screens → Try it out.
+2. Follow Permissions → Pair computers → Arrange screens → Link devices.
 3. Export/import a public pairing card on BOTH computers and compare fingerprints.
 4. Open the matching Windows secure preview and enter its local address on Mac.
 5. Keep your working BatCave apps closed only while testing preview input.
 
 This local test package is not Developer ID signed or notarized. If macOS blocks
 it, allow this specific preview under System Settings → Privacy & Security.
-Do not disable Gatekeeper. It requires macOS 13+ and Apple Silicon.
+Do not disable Gatekeeper. It requires macOS 13+ and the Mac architecture named
+in the DMG filename.
 
 The preview uses separate settings and never replaces your working BatCave app.
 Text clipboard sharing and Open at login are off until you choose to enable them.

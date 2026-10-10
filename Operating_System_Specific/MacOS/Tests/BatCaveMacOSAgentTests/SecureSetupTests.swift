@@ -62,12 +62,14 @@ final class SecureSetupTests: XCTestCase, @unchecked Sendable {
             if client.isAuthenticated { authenticated.fulfill() }
         }
         wait(for: [authenticated], timeout: 5)
+        XCTAssertFalse(client.isSecureInputEnabled)
         let source = serverIdentity.identity.card.deviceId
         let key: [String: Any] = ["virtualKey": 37, "scanCode": 75, "isKeyUp": false, "isExtended": true]
         server.send(frame("input.key", source: source, payload: key))
         Thread.sleep(forTimeInterval: 0.1)
         XCTAssertEqual(recorder.count, 0)
         client.enableSecureInput(true)
+        XCTAssertTrue(client.isSecureInputEnabled)
         Thread.sleep(forTimeInterval: 0.1)
         server.send(frame("cursor.handoff", source: source, payload: ["targetDeviceId": client.localDeviceId,
             "targetDisplayId": client.localDeviceId + ":desktop", "targetEdge": "left", "targetPosition": 0.5, "targetX": 0, "targetY": 200]))
@@ -75,6 +77,8 @@ final class SecureSetupTests: XCTestCase, @unchecked Sendable {
         wait(for: [received], timeout: 5)
         XCTAssertEqual(recorder.count, 1)
         XCTAssertTrue(server.mutualTLSVerified)
+        client.connect(host: "127.0.0.1", port: try XCTUnwrap(server.listener.port).rawValue)
+        XCTAssertFalse(client.isSecureInputEnabled, "Replacing a connection must also reset the UI's input-enabled state")
     }
 
     func testWrongServerPinRejectsTLS() throws {

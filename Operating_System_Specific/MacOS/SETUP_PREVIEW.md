@@ -23,9 +23,10 @@ The guided setup has four pages:
    match that setting on Windows, enter its local address, and connect securely.
    The diagram represents each computer's aggregate desktop. Individual
    monitor placement is a future refinement, not implemented by this picker.
-4. **Try it out:** quit other BatCave controllers before enabling input; choose
-   Start sharing on Windows. Cross both ways, type, try Shift+Arrow, and test
-   reconnect. The checkboxes are user observations, not automatic test results.
+4. **Link devices:** quit other BatCave controllers before enabling Mac input;
+   choose Start sharing on Windows. Pause Mac input stops the connection and
+   restores local control. Save setup keeps the paired-device preferences.
+   Clipboard sharing and Open at login are optional on this page.
 
 Normal return handoffs do not show a HUD. Text clipboard sharing and Open at
 login are opt-in. Closing the setup window leaves a menu-bar app; Quit closes
@@ -64,6 +65,11 @@ mutual TLS with hello/ownership gating. They install no desktop event tap.
 Actual Windows `SslStream` interoperability, first install on another Mac,
 held-drag/modifier crossings, and sleep/wake still require live validation.
 Bonjour discovery and QR pairing are not part of this preview.
+
+For live validation, cross in both directions, type and try Shift+Arrow in a
+regular document, hold a modifier/drag across the boundary, then repeat after
+restarting Windows and after Mac sleep/wake. These checks remain release gates;
+the setup interface does not present self-reported checkboxes as test results.
 
 ## Local files preview
 
