@@ -4,7 +4,8 @@ BatCave runs on macOS 13+ on Apple Silicon with a separate protected profile.
 It does not replace the stable or development app, read their connection
 settings, or approve their hostname-based identities.
 
-Build `Scripts/build_setup_preview.sh`. The resulting DMG contains **BatCave.app**,
+Build `Scripts/build_setup_preview.sh`. The resulting DMG contains a versioned
+**BatCave-0.2.0.app**,
 an Applications shortcut, and first-run instructions. Drag the
 app into Applications and open it. The build script also produces a checksum
 and source/version manifest. Developer ID signing and notarization are release

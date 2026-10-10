@@ -67,12 +67,13 @@ codesign --force --sign - "$APP_DIR"
 codesign --verify --strict "$APP_DIR"
 STAGING_DIR="$(mktemp -d "$ROOT_DIR/Build/SetupPreview/dmg.XXXXXX")"
 trap 'rm -rf "$STAGING_DIR"' EXIT
-ditto "$APP_DIR" "$STAGING_DIR/BatCave.app"
+ditto "$APP_DIR" "$STAGING_DIR/BatCave-$PREVIEW_VERSION.app"
 ln -s /Applications "$STAGING_DIR/Applications"
 cat > "$STAGING_DIR/Start here.txt" <<'TXT'
 BatCave
 
-Drag BatCave to Applications and open it on both computers. Follow the guided
+Drag the versioned BatCave app to Applications and open it on both computers.
+Its filename keeps an existing BatCave.app available. Follow the guided
 Permissions, Pair computers, Arrange screens and Link devices screens.
 Approve each other's public device cards, then enable Mac input and choose
 Start sharing on Windows. Quit another BatCave app before enabling input here.
