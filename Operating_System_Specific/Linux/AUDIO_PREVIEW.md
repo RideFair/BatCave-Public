@@ -33,8 +33,12 @@ eligible for categorical microphone exclusion at this stage.
 
 Five tests pass on actual Ubuntu/Python with real bounded OS pipes and synthetic
 consumers. They check inventory privacy, candidate exclusion, selected target
-identity, queue limits and stop cleanup. They do not exercise a real PipeWire
-daemon, Bluetooth device, speaker or capture backend. The existing input preview
+identity, queue limits and stop cleanup. A separate real PipeWire 1.0.5/WirePlumber
+0.4.17 test runs in an isolated runtime/session, uses a synthetic null sink and
+silent PCM, verifies the selected native playback link and tagging, destroys the
+sink and confirms teardown. It caught and fixed an Ubuntu 24.04 CLI compatibility
+error: 1.0.x stdin is raw without the newer `--raw` flag. No physical Bluetooth
+device, speaker or capture backend has been tested. The existing input preview
 and its live compositor gates remain unchanged.
 
 Next integration gate: run against a private PipeWire test graph, verify the

@@ -122,7 +122,8 @@ def playback_command(output):
         "node.name": "batcave-audio-preview", "node.dont-fallback": True,
         "node.dont-reconnect": True, "node.dont-move": True, "state.restore-props": False,
         "target.object": str(output.serial)}
-    return ["/usr/bin/pw-play", "--raw", "--rate=48000", "--channels=2", "--channel-map=FL,FR",
+    # PipeWire 1.0.x treats '-' as raw stdin; --raw was introduced later.
+    return ["/usr/bin/pw-play", "--rate=48000", "--channels=2", "--channel-map=FL,FR",
             "--format=f32", "--latency=480", "--target=" + str(output.serial),
             "--properties=" + json.dumps(properties, separators=(",", ":")), "-"]
 
