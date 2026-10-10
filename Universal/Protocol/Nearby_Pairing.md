@@ -86,7 +86,9 @@ ports are **decimal ASCII strings**. Session and nonce hex are decoded to raw
 bytes. DER is decoded from the card. The card schema is fixed and its SHA-256
 fingerprint must match DER. IDs and names contain 1–128 Unicode scalar values,
 no control, format, surrogate, line/paragraph separator characters; at most 512
-UTF-8 bytes. No trimming or case folding of names/IDs.
+UTF-8 bytes. Whitespace-only names/IDs are rejected. No trimming or case folding
+of names/IDs. The 1024-byte overall discovery limit still applies even when each
+field individually meets its own length limit; emit Unicode as UTF-8 where possible.
 
 ```
 D(role) = pack("batcave.pair.v1.identity", sessionBytes, role,

@@ -3,6 +3,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.Encodings.Web;
 
 namespace BatCave.WindowsAgent;
 
@@ -16,6 +17,9 @@ internal sealed class NearbyDiscovery : IDisposable
 {
     internal const int DiscoveryPort = 47872;
     internal static readonly IPAddress Group = IPAddress.Parse("239.255.47.87");
+    // This JSON is UDP protocol data, never HTML. Avoid inflating ordinary
+    // Unicode computer names into six-byte escapes under the shared byte limit.
+    private static readonly JsonSerializerOptions WireJson = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     internal sealed record LanInterface(IPAddress Address, IPAddress Mask);
     private readonly object _gate = new();
     private readonly Dictionary<string, NearbyComputer> _computers = new(StringComparer.Ordinal);
@@ -47,7 +51,7 @@ internal sealed class NearbyDiscovery : IDisposable
 
     internal static byte[] Announcement(DeviceIdentityStore.PairingCard card, int inputPort, int pairingPort, bool pairing) =>
         JsonSerializer.SerializeToUtf8Bytes(new { type = "batcave.nearby", version = 1, deviceId = card.DeviceId,
-            displayName = card.DisplayName, platform = "windows", fingerprint = card.CertificateSha256.ToUpperInvariant(), inputPort, pairingPort, pairing });
+            displayName = card.DisplayName, platform = "windows", fingerprint = card.CertificateSha256.ToUpperInvariant(), inputPort, pairingPort, pairing }, WireJson);
 
     internal static NearbyComputer ReadAnnouncement(ReadOnlySpan<byte> bytes, IPAddress source, DateTimeOffset now)
     {
