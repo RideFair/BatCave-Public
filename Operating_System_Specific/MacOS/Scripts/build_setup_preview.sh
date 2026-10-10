@@ -35,7 +35,7 @@ if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
     exit 2
 fi
 # Reuse the public builder's physical-path and working-app preservation guards.
-BATCAVE_APP_DIR="$APP_DIR" CONFIGURATION=release "$ROOT_DIR/Scripts/build_app_bundle.sh"
+BATCAVE_APP_DIR="$APP_DIR" CONFIGURATION=release bash "$ROOT_DIR/Scripts/build_app_bundle.sh"
 if [[ "$(git rev-parse HEAD)" != "$SOURCE_COMMIT" || -n "$(git status --porcelain --untracked-files=normal)" ]]; then
     echo 'Source changed during compilation; rebuild from a clean, fixed commit.' >&2
     exit 2
