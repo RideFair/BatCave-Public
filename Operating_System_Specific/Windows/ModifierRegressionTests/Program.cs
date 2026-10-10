@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using BatCave.WindowsAgent;
 
-internal static class ModifierRegression
+internal static partial class ModifierRegression
 {
     [STAThread]
     private static void Main(string[] args)
@@ -18,6 +18,9 @@ internal static class ModifierRegression
         Run().GetAwaiter().GetResult();
         CheckPairingUi();
         CheckWindowShutdown();
+        CheckReceivingInput();
+        CheckQueuedInput();
+        CheckPlatformRoles();
         if (args.Length == 2 && args[0] == "--render-preview") { RenderPreview(args[1]); }
         if (args.Length == 2 && args[0] == "--render-setup") { RenderSetup(args[1]); }
     }
@@ -88,7 +91,7 @@ internal static class ModifierRegression
             var approvals = new ApprovedPeerStore(directory);
             using var window = new DesktopWindow(identity, approvals, directory, inspectionOnly: true);
             window.StartPosition = FormStartPosition.Manual; window.Location = new(-30000, -30000); window.Show();
-            try { inspect(window, approvals, first.ExportPublicCard("Studio Mac"), second.ExportPublicCard("Laptop Mac")); }
+            try { inspect(window, approvals, first.ExportPublicCard("Studio PC"), second.ExportPublicCard("Laptop PC")); }
             finally { if (!window.IsDisposed) Call(window, "Quit"); }
             Require(!((LocalBridgeAgent)Get(window, "_agent")).IsHandleCreated, "inspection installs no input hooks");
         }
@@ -185,18 +188,33 @@ internal static class ModifierRegression
             {
                 if (small) window.Size = window.MinimumSize;
                 window.ShowStep(1); Application.DoEvents();
+                Set(window, "_windowsFileShared", false); Call(window, "UpdateSetup");
+                var platforms = (ComboBox)Get(window, "_platform");
+                for (var platform = 0; platform < 3; platform++)
+                {
+                    platforms.SelectedIndex = platform; Application.DoEvents();
+                    CaptureWindow(window, output, "platform-" + platform + (small ? "-small" : ""));
+                }
                 Set(window, "_windowsFileShared", true); Call(window, "UpdateSetup"); Application.DoEvents();
                 CaptureWindow(window, output, "receive" + (small ? "-small" : ""));
                 Call(window, "ApplyApproval", first); Application.DoEvents();
                 CaptureWindow(window, output, "paired" + (small ? "-small" : ""));
+                Call(window, "SetConnectionDirection", true); Application.DoEvents();
+                CaptureWindow(window, output, "connect-outgoing" + (small ? "-small" : ""));
+                Call(window, "SetConnectionDirection", false);
                 var lan = (LanBridgePeer)Get(window, "_lan");
                 // Only a UI fixture: no socket, TLS session, listener or input hooks.
                 Set(lan, "_writer", new StreamWriter(Stream.Null)); Set(lan, "_peerDeviceId", first.DeviceId);
-                Set(window, "_hello", new DeviceHelloPayload(first.DeviceId, "Studio Mac", "macos", "BatCave", new(0, 0, 2560, 1440, 2559, 1439)));
+                Set(window, "_hello", new DeviceHelloPayload(first.DeviceId, "Studio PC", "Windows", "BatCave", new(0, 0, 2560, 1440, 2559, 1439)));
                 Call(window, "RefreshLayout"); window.ShowStep(3); Application.DoEvents();
                 CaptureWindow(window, output, "connected" + (small ? "-small" : ""));
                 window.ShowStep(2); Application.DoEvents();
                 CaptureWindow(window, output, "layout" + (small ? "-small" : ""));
+                ((ComboBox)Get(window, "_role")).SelectedIndex = 1; Application.DoEvents();
+                CaptureWindow(window, output, "receiver-layout" + (small ? "-small" : ""));
+                window.ShowStep(3); Application.DoEvents();
+                CaptureWindow(window, output, "receiver-link" + (small ? "-small" : ""));
+                ((ComboBox)Get(window, "_role")).SelectedIndex = 0;
                 Set(lan, "_writer", null!); Set(lan, "_peerDeviceId", null!); Set(window, "_hello", null!);
                 Call(window, "Unpair");
             }

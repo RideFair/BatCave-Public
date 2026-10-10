@@ -2,7 +2,7 @@ namespace BatCave.WindowsAgent;
 
 internal enum SetupOperation { None, Next, Export, Pair, Start, Pause }
 internal sealed record SetupAction(string Label, SetupOperation Operation, bool Enabled = true);
-internal sealed record DesktopSetupState(bool ListenerReady, bool PeerSelected, bool Connected, bool LayoutValid, bool Sharing, bool AddingComputer = false, bool WindowsFileShared = false);
+internal sealed record DesktopSetupState(bool ListenerReady, bool PeerSelected, bool Connected, bool LayoutValid, bool Sharing, bool AddingComputer = false, bool WindowsFileShared = false, bool ReceiveInput = false);
 
 internal static class DesktopSetupFlow
 {
@@ -17,13 +17,14 @@ internal static class DesktopSetupFlow
             : state.WindowsFileShared ? new("Add computer…", SetupOperation.Pair) : new("Save Windows file…", SetupOperation.Export);
         if (!state.PeerSelected) return new("Pair computers", SetupOperation.Pair);
         if (!state.ListenerReady || !state.Connected) return new("Waiting for other device…", SetupOperation.None, false);
-        if (!state.LayoutValid) return new("Choose an outside edge", SetupOperation.None, false);
+        if (!state.ReceiveInput && !state.LayoutValid) return new("Choose an outside edge", SetupOperation.None, false);
         if (step == 2) return new("Link devices", SetupOperation.Next);
-        return state.Sharing ? new("Pause sharing", SetupOperation.Pause) : new("Start sharing", SetupOperation.Start);
+        return state.Sharing ? new("Pause sharing", SetupOperation.Pause)
+            : new(state.ReceiveInput ? "Enable input on this PC" : "Start sharing", SetupOperation.Start);
     }
 
     public static string Status(DesktopSetupState state) => !state.ListenerReady ? "Connection service is unavailable. Reopen BatCave."
         : !state.PeerSelected ? "No computer added yet. Open Pair computers to get started."
         : state.Connected ? state.Sharing ? "Sharing securely. Pause to return control here." : "Connected securely. Sharing is paused."
-        : "Computer approved. Connect from BatCave on the other computer.";
+        : "Computer approved. Use either computer’s address to connect in Pair computers.";
 }

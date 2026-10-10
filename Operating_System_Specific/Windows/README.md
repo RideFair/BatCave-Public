@@ -19,10 +19,19 @@ Compare the full approval code (certificate fingerprint) with the originating
 computer's Connection details before approving. Connection files contain public
 identity information; private keys stay on their originating computers. A fresh
 profile trusts no peer. Approval selects the new computer and reveals this PC's
-local address in Pair computers. Enter that address in Arrange screens on the
-other computer and choose Connect securely. Both must use the same local network.
-Then arrange your screens, enable input on the receiver, and choose Start sharing
-on Windows. The matching Mac and Linux secure transports are included in this source.
+local address in Pair computers. On another Windows PC, choose Connect from this
+PC instead, enter that address, and choose Connect securely. Current Mac/Linux
+packages connect from Arrange screens. Connect from only one computer, on the same
+local network.
+
+For two Windows PCs, install 0.2.3 on both. In Pair computers, set Keyboard and
+mouse to This PC on the source and The other computer on the receiver. Arrange
+screens on the source. In Link devices, choose Enable input on this PC on the
+receiver, then Start sharing on the source. Windows remembers each approved
+computer's role and outgoing address. Saving either never enables input.
+
+The Mac/Linux 0.2.0 packages receive Windows input. Their native source roles need
+updated packages; choosing a platform does not add capture support to an older app.
 
 Pause, Escape, F12, disconnect, sleep, and session lock restore local control.
 Reconnect does not automatically resume sharing. Text clipboard sharing and
@@ -42,6 +51,12 @@ dotnet run --project Operating_System_Specific/Windows/TopologyRegressionTests -
 These checks cover transport, held-input cleanup, setup activation and monitor
 routing. They do not replace live cross-platform tests. See
 [packaging](Packaging/README.md) for installer checks.
+
+The Windows peer test creates two isolated protected identities and exchanges
+input over real pinned TLS in both roles. It routes an actual saved monitor
+crossing into a recording input sink. UI dispatch tests cover queued input across
+pause/re-enable and receiver navigation. No regression fixture injects input into
+the user's desktop or replaces an installed app.
 
 The source-only `--insecure-loopback-development` profile is for local regression
 work. It binds only loopback and refuses remote destinations. Installed secure

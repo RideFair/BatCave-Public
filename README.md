@@ -8,12 +8,12 @@ TLS 1.3 and must approve each other before sharing input.
 
 | Platform | Installer | Installation |
 | --- | --- | --- |
-| Windows 11 x64 | **[Download Windows 0.2.2 installer (.exe)](https://github.com/RideFair/BatCave-Public/releases/download/v0.2.2/BatCave-0.2.2-Windows-x64-Setup.exe)** | Run the installer and open BatCave. .NET is included. |
+| Windows 11 x64 | **[Download Windows 0.2.3 installer (.exe)](https://github.com/RideFair/BatCave-Public/releases/download/v0.2.3/BatCave-0.2.3-Windows-x64-Setup.exe)** | Run the installer and open BatCave. .NET is included. |
 | Apple Silicon Mac, macOS 13+ | **[Download Mac 0.2.0 installer (.dmg)](https://github.com/RideFair/BatCave-Public/releases/download/v0.2.0/BatCave-0.2.0-arm64.dmg)** | Drag the versioned app to Applications and open it. An existing BatCave app stays separate. |
 | Ubuntu 24.04 amd64 desktop | **[Download Linux 0.2.0 installer (.deb)](https://github.com/RideFair/BatCave-Public/releases/download/v0.2.0/BatCave-Linux-0.2.0-amd64.deb)** | Open the package with your software installer, then launch BatCave. |
 
 Downloads are public; no GitHub account is required. Release notes and checksums:
-[Windows 0.2.2](https://github.com/RideFair/BatCave-Public/releases/tag/v0.2.2),
+[Windows 0.2.3](https://github.com/RideFair/BatCave-Public/releases/tag/v0.2.3),
 [Mac/Linux 0.2.0](https://github.com/RideFair/BatCave-Public/releases/tag/v0.2.0).
 Windows is unsigned; Mac is ad-hoc signed and not notarized. Physical fresh-device
 setup and secure input/recovery checks remain incomplete; see the release notes.
@@ -22,16 +22,16 @@ setup and secure input/recovery checks remain incomplete; see the release notes.
 
 Open BatCave on both computers and follow **Permissions → Pair computers →
 Arrange screens → Link devices**. Pair computers explains how to exchange the
-connection files and compare their approval codes. Enter the PC address shown
-there in BatCave on the other computer, position your screens, enable input on
-the receiving computer, and choose **Start sharing** on Windows.
-**Pause sharing**, Escape, or F12 returns control to Windows.
+connection files and compare their approval codes. Connect from one computer
+using the other's address. Choose which computer supplies the keyboard and mouse,
+arrange screens there, enable input on the receiving computer, then choose
+**Start sharing** on the source. **Pause sharing**, Escape, or F12 stops sharing.
 
-This source includes the Windows controller and the matching secure Mac and Linux
-apps. Live secure Mac/Linux input and fresh-device setup still need verification
-for these early releases. Linux currently receives Windows input;
-it cannot control Windows. WSL verifies builds and packages, but does not provide
-the desktop permission and input checks required for Linux.
+Windows 0.2.3 can send or receive input; install it on both PCs for Windows-to-Windows.
+The published Mac/Linux 0.2.0 apps receive Windows input. Their source roles need
+updated native packages. Physical secure input and fresh-device setup still need
+verification. WSL verifies builds and packages, but does not provide the desktop
+permission and input checks required for Linux.
 
 For source installation, see [Contributing](CONTRIBUTING.md#build-from-source).
 The [monitor guide](Docs/Monitor_Layout.md) explains placement. Network file

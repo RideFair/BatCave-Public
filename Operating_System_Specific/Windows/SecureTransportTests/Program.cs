@@ -27,6 +27,7 @@ await TestSession(serverPin, clientPin with { CertificateSha256 = serverPin.Cert
 
 if (OperatingSystem.IsWindows())
 {
+    await WindowsPeerRoleChecks.Run();
     var directory = Path.Combine(Path.GetTempPath(), "BatCave-identity-test-" + Guid.NewGuid().ToString("N"));
     using var identity = DeviceIdentityStore.OpenOrCreate(directory);
     try
@@ -107,6 +108,39 @@ async Task TestAuthenticatedListener(DeviceIdentityStore identity)
             new DeviceHelloPayload("impostor", "Mac", "macOS", "test", new ScreenBounds(0, 0, 1920, 1080, 1919, 1079))), options));
         Require(await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5)) is null, "certificate cannot claim another device ID");
         Require(!lan.HasPeer && connected == 0, "mismatched hello never arms control");
+    }
+    foreach (var invalid in new object[]
+    {
+        new { protocol = "wrong-protocol", type = "device.hello", sourceDeviceId = clientPin.DeviceId, payload = new { deviceId = clientPin.DeviceId } },
+        new { protocol = BatCaveProtocol.Name, type = "device.hello", sourceDeviceId = clientPin.DeviceId },
+        BatCaveEnvelope.Create(clientPin.DeviceId, "device.hello", new DeviceHelloPayload(clientPin.DeviceId,
+            "Mac", "macOS", "test", new ScreenBounds(int.MaxValue, 0, 1920, 1080, 1919, 1079))),
+        BatCaveEnvelope.Create(clientPin.DeviceId, "device.hello", new DeviceHelloPayload(clientPin.DeviceId,
+            "Mac", "macOS", "test", new ScreenBounds(0, 0, 1920, 1080, 9000, 1079)))
+    })
+    {
+        using var client = new TcpClient(); await client.ConnectAsync(IPAddress.Loopback, port);
+        using var tls = await SecurePeerTransport.AuthenticateClientAsync(client, clientIdentity, expectedServer);
+        using var reader = new StreamReader(tls, Encoding.UTF8, false, leaveOpen: true);
+        using var writer = new StreamWriter(tls, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+        await reader.ReadLineAsync();
+        await writer.WriteLineAsync(System.Text.Json.JsonSerializer.Serialize(invalid, options));
+        Require(await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5)) is null && !lan.HasPeer,
+            "invalid authenticated envelope or screen geometry ends the connection");
+    }
+    // Existing Mac versions report the exclusive screen maximum.
+    using (var client = new TcpClient())
+    {
+        await client.ConnectAsync(IPAddress.Loopback, port);
+        using var tls = await SecurePeerTransport.AuthenticateClientAsync(client, clientIdentity, expectedServer);
+        using var reader = new StreamReader(tls, Encoding.UTF8, false, leaveOpen: true);
+        using var writer = new StreamWriter(tls, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+        await reader.ReadLineAsync();
+        await writer.WriteLineAsync(System.Text.Json.JsonSerializer.Serialize(BatCaveEnvelope.Create(clientPin.DeviceId,
+            "device.hello", new DeviceHelloPayload(clientPin.DeviceId, "Mac", "macOS", "test", new ScreenBounds(0, 0, 1920, 1080, 1920, 1080))), options));
+        await Until(() => lan.HasPeer);
+        lan.Disconnect();
+        Require(await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5)) is null, "exclusive Mac bounds remain compatible");
     }
     using (var client = new TcpClient())
     {
@@ -275,4 +309,3 @@ static void Require(bool condition, string reason)
 {
     if (!condition) { throw new Exception(reason); }
 }
-

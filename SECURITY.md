@@ -23,8 +23,14 @@ Uninstall preserves pairing state for reinstall; it does not revoke peers.
 
 Incoming JSON frames are limited to 256 KiB and decoded clipboard text to 64 KiB.
 Outbound Windows queues have message and byte limits and disconnect on overflow.
+Windows input dispatch also bounds queued UI work and invalidates it when input
+is paused, so re-enabling cannot replay input received under an earlier activation.
 Key codes and typed text are excluded from routine logs. Local diagnostic logs
 can still identify devices and must not be uploaded without review.
+
+Windows 0.2.3 removes older per-key debug logging. Logs made by earlier Windows
+versions may contain typed text; updating does not remove those existing files.
+Keep them private and review them before sharing diagnostics.
 
 The Mac guided app connects through pinned mutual TLS. Its legacy command-line
 network path is disabled by default; explicit development access permits loopback

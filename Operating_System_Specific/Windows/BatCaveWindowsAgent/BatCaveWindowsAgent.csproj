@@ -9,8 +9,8 @@
     <ApplicationIcon>..\batcave_icon.ico</ApplicationIcon>
     <Title>BatCave</Title>
     <Product>BatCave</Product>
-    <Version>0.2.2</Version>
-    <AssemblyVersion>0.2.2.0</AssemblyVersion>
+    <Version>0.2.3</Version>
+    <AssemblyVersion>0.2.3.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>

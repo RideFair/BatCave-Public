@@ -12,6 +12,8 @@
     <Compile Include="../BatCaveWindowsAgent/BoundedFrameReader.cs" Link="BoundedFrameReader.cs" />
     <Compile Include="../BatCaveWindowsAgent/LanBridgePeer.cs" Link="LanBridgePeer.cs" />
     <Compile Include="../BatCaveWindowsAgent/ProtocolMessages.cs" Link="ProtocolMessages.cs" />
+    <Compile Include="../BatCaveWindowsAgent/WindowsInputReceiver.cs" Link="WindowsInputReceiver.cs" />
+    <Compile Include="../BatCaveWindowsAgent/HeldKeyState.cs" Link="HeldKeyState.cs" />
     <Compile Include="../BatCaveWindowsAgent/VirtualDesktopBounds.cs" Link="VirtualDesktopBounds.cs" />
     <Compile Include="../BatCaveWindowsAgent/MonitorLayout.cs" Link="MonitorLayout.cs" />
     <Compile Include="../BatCaveWindowsAgent/SecureTopology.cs" Link="SecureTopology.cs" />

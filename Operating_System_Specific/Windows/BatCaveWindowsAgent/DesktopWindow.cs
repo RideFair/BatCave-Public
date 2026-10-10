@@ -49,6 +49,18 @@ internal sealed class DesktopWindow : Form
     private readonly FlowLayoutPanel _platformRow = new() { AutoSize = true, WrapContents = false, Margin = new Padding(0, 0, 0, 12) };
     private readonly FlowLayoutPanel _managePeers = new() { AutoSize = true, WrapContents = true, Margin = new Padding(0, 10, 0, 8) };
     private readonly ComboBox _platform = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 140 };
+    private readonly ComboBox _role = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
+    private readonly FlowLayoutPanel _rolePanel = new() { AutoSize = true, WrapContents = true, Margin = new Padding(0, 0, 0, 18) };
+    private readonly Label _roleHelp = Body("");
+    private readonly FlowLayoutPanel _outgoingPanel = new() { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Visible = false };
+    private readonly FlowLayoutPanel _incomingPanel = new() { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+    private readonly DesktopButton _connectionDirection = new() { Text = "Connect from this PC instead", Quiet = true };
+    private readonly TextBox _host = new() { Width = 280, PlaceholderText = "Other computer’s address", AccessibleName = "Other computer’s address" };
+    private readonly DesktopButton _connect = new() { Text = "Connect securely" };
+    private readonly Dictionary<string, ConnectionSettings> _connectionSettings = new(StringComparer.Ordinal);
+    private CancellationTokenSource? _connectCancellation;
+    private bool _loadingConnection, _connectWanted, _connecting, _reconnectSuspended;
+    private DateTimeOffset _nextConnectAttempt;
     private readonly ComboBox _addresses = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 295 };
     private readonly DesktopButton _copyAddress = new() { Text = "Copy address" };
     private readonly DesktopButton _removePeer = new() { Text = "Remove computer", Quiet = true };
@@ -64,6 +76,7 @@ internal sealed class DesktopWindow : Form
     private readonly ComboBox _monitor = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 270 };
     private readonly TrackBar _alignment = new() { Minimum = -100, Maximum = 100, TickStyle = TickStyle.None, Dock = DockStyle.Fill, AutoSize = false, AccessibleName = "Screen alignment" };
     private readonly MonitorLayoutCanvas _canvas = new() { Dock = DockStyle.Fill };
+    private readonly SetupPage _receiverArrangement = new();
     private readonly Label _layoutStatus = new() { AutoSize = true, MaximumSize = new Size(590, 0) };
     private readonly Label _alignmentLabel = new() { AutoSize = true };
     private IReadOnlyList<MonitorDescriptor> _monitors = Array.Empty<MonitorDescriptor>();
@@ -77,7 +90,10 @@ internal sealed class DesktopWindow : Form
         public override string ToString() => Monitor.Label;
     }
 
-    private sealed record Settings(string? SelectedPeerId, bool PeerOnRight, bool ShareClipboard = false);
+    private sealed record ConnectionSettings(string Host = "", bool ReceiveInput = false);
+    private sealed record Settings(string? SelectedPeerId, bool PeerOnRight, bool ShareClipboard = false,
+        Dictionary<string, ConnectionSettings>? Connections = null);
+    private bool ReceiveInput => _role.SelectedIndex == 1;
     private sealed record PeerItem(DeviceIdentityStore.PairingCard Card)
     {
         public override string ToString() => Card.DisplayName;
@@ -94,7 +110,7 @@ internal sealed class DesktopWindow : Form
         _settingsPath = Path.Combine(directory, "desktop-settings.json");
         _layoutStore = new MonitorLayoutStore(Path.Combine(directory, "monitor-layouts.json"));
         _lan = new LanBridgePeer(identity, () => _approvals.Peers.Where(peer => peer.DeviceId == _selectedPeerId).ToArray());
-        _agent = new LocalBridgeAgent(_lan, _topologyPath);
+        _agent = new LocalBridgeAgent(_lan, _topologyPath, inspectionOnly: inspectionOnly);
         if (!inspectionOnly) _ = _agent.Handle;
         Text = "BatCave";
         _listenerReady = inspectionOnly;
@@ -154,7 +170,7 @@ internal sealed class DesktopWindow : Form
         var permissions = Page("One keyboard. Both computers.", "Use this computer’s keyboard and mouse across your linked devices.");
         permissions.Controls.Add(_permissionStatus);
         permissions.Controls.Add(Body("Windows needs no extra input permission. If Windows asks about network access, allow BatCave on your private network."));
-        permissions.Controls.Add(Body("Sharing starts only when you choose Start sharing. Pause sharing always returns control to this computer."));
+        permissions.Controls.Add(Body("Input starts only when you enable it in Link devices. Pause sharing stops input sharing on this PC."));
         permissions.Controls.Add(Body("Minimize this window to keep BatCave running. Closing it stops sharing and exits."));
         AddPage(permissions);
 
@@ -201,9 +217,15 @@ internal sealed class DesktopWindow : Form
         positionControls.FlatAppearance.BorderSize = 0;
         arrangement.Controls.Add(positionControls, 0, 4);
         _layoutStatus.MaximumSize = new Size(600, 0); arrangement.Controls.Add(_layoutStatus, 0, 7);
-        AddPage(arrangementScroll);
+        var arrangementPage = new Panel { Dock = DockStyle.Fill };
+        _receiverArrangement.Controls.Add(Heading("Arrange on your other computer"));
+        _receiverArrangement.Controls.Add(Body("Use Arrange screens on the computer supplying the keyboard and mouse. Place this PC where it sits on your desk."));
+        _receiverArrangement.Controls.Add(Body("This PC follows that arrangement. Continue to Link devices to enable input here."));
+        arrangementPage.Controls.Add(arrangementScroll); arrangementPage.Controls.Add(_receiverArrangement);
+        AddPage(arrangementPage);
 
-        var linking = Page("Ready when you are", "Enable input on your other device, then start sharing here.");
+        var linking = new SetupPage(); linking.Controls.Add(Heading("Ready when you are"));
+        linking.Controls.Add(_roleHelp);
         linking.Controls.Add(_linkStatus);
         linking.Controls.Add(Body("Move your mouse through the shared screen edge to use your other computer. Escape, F12, or Pause sharing restores local control."));
         var login = new CheckBox { Text = "Open BatCave at login", AutoSize = true, Margin = new Padding(0, 16, 0, 8) };
@@ -234,10 +256,12 @@ internal sealed class DesktopWindow : Form
             if (_setupStep == 1 && _addingComputer) { _addingComputer = false; UpdateSetup(); }
             else ShowStep(_setupStep - 1);
         }; actions.Controls.Add(_back, 0, 0);
-        StyleButton(_saveSetup); _saveSetup.Click += (_, _) => Guard(() => { SaveLayout(); SaveSettings(); UpdateSetup(); });
+        StyleButton(_saveSetup); _saveSetup.Click += (_, _) => Guard(() => { if (!ReceiveInput) SaveLayout(); SaveSettings(); UpdateSetup(); });
         actions.Controls.Add(_saveSetup, 2, 0); StyleButton(_start, true); actions.Controls.Add(_start, 3, 0);
         content.Controls.Add(actions, 0, 4);
         var settings = ReadSettings();
+        if (settings?.Connections is { Count: <= 128 } connections)
+            foreach (var entry in connections) if (entry.Value is not null) _connectionSettings[entry.Key] = entry.Value;
         _selectedPeerId = settings?.SelectedPeerId;
         _legacyLayoutPeer = settings?.SelectedPeerId;
         _legacySide = settings?.PeerOnRight == false ? PeerSide.Left : PeerSide.Right;
@@ -245,16 +269,17 @@ internal sealed class DesktopWindow : Form
         clipboard.Checked = settings?.ShareClipboard == true;
         _agent.ClipboardSharingEnabled = clipboard.Checked;
         _monitors = inspectionOnly ? [new("inspection-monitor", "Monitor 1 · Primary", new(0, 0, 1920, 1080))] : DiscoverMonitors();
-        RefreshPeers(); LoadPeerLayout();
+        RefreshPeers(); LoadPeerLayout(); LoadConnectionSettings();
         _status.Text = _selectedPeerId is null ? "Pair another computer to begin." : "Waiting for the selected computer…";
         clipboard.CheckedChanged += (_, _) => Guard(() => { _agent.ClipboardSharingEnabled = clipboard.Checked; SaveSettings(); });
         _peers.SelectedIndexChanged += (_, _) => Guard(() =>
         {
             if (_refreshingPeers) return;
+            CancelConnect();
             Pause("active computer changed");
             _selectedPeerId = (_peers.SelectedItem as PeerItem)?.Card.DeviceId; _hello = null;
-            _platform.SelectedIndex = _selectedPeerId?.StartsWith("linux:", StringComparison.Ordinal) == true ? 1 : 0;
-            _lan.DisconnectUnapprovedPeer(); LoadPeerLayout(); SaveSettings(); UpdateSetup();
+            _platform.SelectedIndex = PlatformIndex(_selectedPeerId);
+            _lan.DisconnectUnapprovedPeer(); LoadPeerLayout(); LoadConnectionSettings(); SaveSettings(); UpdateSetup();
         });
         _monitor.SelectedIndexChanged += (_, _) => LayoutEdited();
         _side.SelectedIndexChanged += (_, _) => LayoutEdited();
@@ -278,7 +303,12 @@ internal sealed class DesktopWindow : Form
         menu.Items.Add("Open BatCave", null, (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); });
         menu.Items.Add("Pause", null, (_, _) => Pause("paused from tray")); menu.Items.Add("Quit", null, (_, _) => Quit());
         _tray.ContextMenuStrip = menu; _tray.DoubleClick += (_, _) => { Show(); Activate(); };
-        _timer.Tick += (_, _) => UpdateSetup();
+        _timer.Tick += (_, _) =>
+        {
+            UpdateSetup();
+            if (!_inspectionOnly && _connectWanted && !_connecting && !_lan.HasPeer && DateTimeOffset.UtcNow >= _nextConnectAttempt)
+                _ = ConnectPeerAsync();
+        };
         ShowStep(_selectedPeerId is null ? 0 : 3);
         Shown += (_, _) => Guard(() =>
         {
@@ -295,7 +325,7 @@ internal sealed class DesktopWindow : Form
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         // Accept Windows Restart Manager's shutdown query. WinForms waits for
         // WM_ENDSESSION before closing; a cancelled update stays safely paused.
-        FormClosing += (_, _) => Pause("application closing");
+        FormClosing += (_, _) => { CancelConnect(); Pause("application closing"); };
         FormClosed += (_, _) =>
         {
             _timer.Stop(); SystemEvents.PowerModeChanged -= OnPowerModeChanged; SystemEvents.SessionSwitch -= OnSessionSwitch;
@@ -319,8 +349,8 @@ internal sealed class DesktopWindow : Form
         var page = new SetupPage();
         page.Controls.Add(_pairTitle);
         page.Controls.Add(_pairExplanation);
-        _platformRow.Controls.Add(new Label { Text = "My other computer is a", AutoSize = true, Margin = new Padding(0, 5, 10, 0) });
-        _platform.Items.AddRange(["Mac", "Linux computer"]); _platform.SelectedIndex = 0;
+        _platformRow.Controls.Add(new Label { Text = "Other computer", AutoSize = true, Margin = new Padding(0, 5, 10, 0) });
+        _platform.Items.AddRange(["Windows", "Mac", "Linux"]); _platform.SelectedIndex = 0;
         _platform.AccessibleName = "Other computer's operating system";
         _platform.SelectedIndexChanged += (_, _) => UpdatePairingInstructions();
         _platformRow.Controls.Add(_platform); page.Controls.Add(_platformRow);
@@ -351,8 +381,17 @@ internal sealed class DesktopWindow : Form
         _fileGuide.Controls.Add(alternative); _fileGuide.Controls.Add(alternativeHelp); _fileGuide.Controls.Add(alternatives);
         page.Controls.Add(_fileGuide);
 
-        _connectPanel.Controls.Add(SectionTitle("3", "Connect from the other computer"));
-        _connectInstructions.Margin = new Padding(0, 0, 0, 10); _connectPanel.Controls.Add(_connectInstructions);
+        _rolePanel.Controls.Add(new Label { Text = "Keyboard and mouse", AutoSize = true, Margin = new Padding(0, 5, 12, 0) });
+        _role.Items.AddRange(["This PC", "The other computer"]); _role.SelectedIndex = 0;
+        _role.AccessibleName = "Computer providing the keyboard and mouse";
+        _rolePanel.Controls.Add(_role); page.Controls.Add(_rolePanel);
+        _role.SelectedIndexChanged += (_, _) => Guard(() =>
+        {
+            if (_loadingConnection) return;
+            Pause("input role changed"); SaveSettings(); UpdateSetup();
+        });
+        _connectPanel.Controls.Add(SectionTitle("3", "Connect your computers"));
+        _connectInstructions.Margin = new Padding(0, 0, 0, 10); _incomingPanel.Controls.Add(_connectInstructions);
         var addressRow = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 0, 0, 14) };
         _addresses.AccessibleName = "This PC’s local network address";
         _addresses.Margin = new Padding(0, 8, 12, 0); addressRow.Controls.Add(_addresses);
@@ -360,14 +399,24 @@ internal sealed class DesktopWindow : Form
         {
             if (_addresses.SelectedItem is NetworkAddress address) { Clipboard.SetText(address.Address); Notice("PC address copied. Enter it in BatCave on your other computer."); }
         }); addressRow.Controls.Add(_copyAddress);
-        _connectPanel.Controls.Add(addressRow);
-        _connectPanel.Controls.Add(Body("Use the same home or office network on both computers. If Windows asks, allow BatCave on private networks."));
+        _incomingPanel.Controls.Add(addressRow); _connectPanel.Controls.Add(_incomingPanel);
+        _outgoingPanel.Controls.Add(Body("Enter the address shown in BatCave on the other computer:"));
+        var connectRow = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 0, 0, 12) };
+        connectRow.Controls.Add(_host); connectRow.Controls.Add(_connect); _outgoingPanel.Controls.Add(connectRow);
+        _connectPanel.Controls.Add(_outgoingPanel);
+        _connectionDirection.Click += (_, _) => SetConnectionDirection(!_outgoingPanel.Visible);
+        _connectPanel.Controls.Add(_connectionDirection);
+        _connect.Click += async (_, _) =>
+        {
+            _connectWanted = true; await ConnectPeerAsync();
+        };
+        _host.TextChanged += (_, _) => { if (!_loadingConnection) CancelConnect(); };
         page.Controls.Add(_connectPanel);
         page.Controls.Add(_managePeers);
         page.Resize += (_, _) =>
         {
             var width = Math.Max(100, page.ClientSize.Width - page.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 8);
-            foreach (var panel in new[] { _fileGuide, _pairedPanel, _connectPanel })
+            foreach (var panel in new[] { _fileGuide, _pairedPanel, _connectPanel, _rolePanel, _outgoingPanel, _incomingPanel })
             {
                 panel.MaximumSize = new Size(width, 0);
                 foreach (Control child in panel.Controls)
@@ -389,16 +438,80 @@ internal sealed class DesktopWindow : Form
 
     private void UpdatePairingInstructions()
     {
-        var mac = _platform.SelectedIndex == 0;
-        _sendInstructions.Text = mac
-            ? "Choose Save Windows file below and send the file to your Mac by email or USB.\nOn your Mac: Pair computers → Use a card file → Import Windows card. Approve this PC there."
-            : "Choose Save Windows file below and send the file to Linux by email or USB.\nOn Linux: Pair computers → Import Windows card. Approve this PC there.";
-        _receiveInstructions.Text = mac
-            ? "On your Mac, import the Windows file first. Then choose Save Mac card in the same screen.\n\nSend the Mac file back to this PC and choose Add computer below. You’ll compare the approval code before allowing the connection."
-            : "On Linux, import the Windows file first. Then choose Export device card in the same screen.\n\nSend the Linux file back to this PC and choose Add computer below. You’ll compare the approval code before allowing the connection.";
-        _connectInstructions.Text = mac
-            ? "On your Mac, open Arrange screens. Enter this PC’s address below in Windows local address or hostname, then choose Connect securely."
-            : "On Linux, open Arrange screens. Enter this PC’s address below in the Windows address field, then choose Connect securely.";
+        var name = _platform.SelectedIndex switch { 1 => "Mac", 2 => "Linux computer", _ => "other Windows PC" };
+        var import = _platform.SelectedIndex switch
+        {
+            1 => "Pair computers → Use a card file → Import Windows card",
+            2 => "Pair computers → Add Windows computer (Import Windows card in 0.2.0)",
+            _ => "Pair computers → I already have the other computer’s file → Add computer"
+        };
+        var export = _platform.SelectedIndex switch { 1 => "Save Mac card", 2 => "Save Linux file (Export device card in 0.2.0)", _ => "Save Windows file again" };
+        _sendInstructions.Text = $"Choose Save Windows file below and send it to your {name} by email or USB.\nOn that computer: {import}. Compare the approval code and approve this PC there.";
+        _receiveInstructions.Text = $"On your {name}, import this PC’s file first. Then choose {export}.\n\nSend that computer’s file back here and choose Add computer below. Both computers need to approve each other.";
+        _connectInstructions.Text = _platform.SelectedIndex == 0
+            ? "On the other PC, open Pair computers → Connect from this PC instead. Enter the address below, then choose Connect securely. Keep both PCs on the same network."
+            : $"On your {name}, open Arrange screens. Enter the address below and choose Connect securely. Keep both computers on the same network.";
+    }
+
+    private static int PlatformIndex(string? deviceId) => deviceId?.StartsWith("macos:", StringComparison.Ordinal) == true ? 1
+        : deviceId?.StartsWith("linux:", StringComparison.Ordinal) == true ? 2 : 0;
+
+    private void CancelConnect()
+    {
+        _connectWanted = false;
+        _connectCancellation?.Cancel();
+    }
+    private void SetConnectionDirection(bool outgoing)
+    {
+        _outgoingPanel.Visible = outgoing; _incomingPanel.Visible = !outgoing;
+        _connectionDirection.Text = outgoing ? "Use this PC’s address instead" : "Connect from this PC instead";
+    }
+
+    private void LoadConnectionSettings()
+    {
+        CancelConnect(); _loadingConnection = true;
+        try
+        {
+            var saved = _selectedPeerId is { } id ? _connectionSettings.GetValueOrDefault(id) : null;
+            _host.Text = saved?.Host ?? "";
+            SetConnectionDirection(_host.Text.Length > 0);
+            _role.SelectedIndex = saved?.ReceiveInput == true ? 1 : 0;
+            _connectWanted = _host.Text.Length > 0;
+        }
+        finally { _loadingConnection = false; }
+    }
+
+    private async Task ConnectPeerAsync()
+    {
+        if (_inspectionOnly || _reconnectSuspended || _connecting || _lan.HasPeer || _peers.SelectedItem is not PeerItem selected) return;
+        var host = _host.Text.Trim();
+        if (host.Length == 0 || host.Length > 253 || Uri.CheckHostName(host) == UriHostNameType.Unknown)
+        { _connectWanted = false; Notice("Enter the local address shown in BatCave on your other computer."); return; }
+        var peerId = selected.Card.DeviceId;
+        var attempt = new CancellationTokenSource(); _connectCancellation = attempt;
+        _connecting = true; _nextConnectAttempt = DateTimeOffset.UtcNow.AddSeconds(5);
+        try
+        {
+            SaveSettings(); UpdateSetup();
+            Notice("Connecting securely… Keep BatCave open on the other computer.");
+            await _lan.ConnectSecureAsync(host, new ApprovedPeer(peerId, selected.Card.CertificateSha256), cancellationToken: attempt.Token);
+            if (!IsDisposed && peerId == _selectedPeerId && !attempt.IsCancellationRequested)
+                Notice("Checking the approved computer’s identity…");
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (IsDisposed || peerId != _selectedPeerId || attempt.IsCancellationRequested) return;
+            if (ex is System.Security.Authentication.AuthenticationException or InvalidOperationException or IOException)
+                _connectWanted = false;
+            Notice("Could not link computers. Check the address, keep BatCave open, and approve both connection files.");
+        }
+        finally
+        {
+            if (ReferenceEquals(_connectCancellation, attempt)) { _connectCancellation = null; _connecting = false; }
+            attempt.Dispose(); _nextConnectAttempt = DateTimeOffset.UtcNow.AddSeconds(5);
+            if (!IsDisposed) UpdateSetup();
+        }
     }
 
     private sealed record NetworkAddress(string Name, string Address)
@@ -447,7 +560,8 @@ internal sealed class DesktopWindow : Form
         _setupPages[step].BringToFront(); UpdateSetup();
     }
     private DesktopSetupState SetupState() => new(_listenerReady, _peers.SelectedItem is PeerItem selected && selected.Card.DeviceId == _selectedPeerId,
-        _lan.HasPeer && _hello?.DeviceId == _selectedPeerId && _lan.CurrentPeerDeviceId == _selectedPeerId, _layoutValid, _agent.IsBridgeActive, _addingComputer, _windowsFileShared);
+        _lan.HasPeer && _hello?.DeviceId == _selectedPeerId && _lan.CurrentPeerDeviceId == _selectedPeerId,
+        _layoutValid, _agent.IsBridgeActive || _agent.IsReceivingEnabled, _addingComputer, _windowsFileShared, ReceiveInput);
     private void UpdateSetup()
     {
         var state = SetupState();
@@ -456,7 +570,7 @@ internal sealed class DesktopWindow : Form
         _start.Text = action.Label; _start.Enabled = action.Enabled;
         _back.Visible = _setupStep > 0; _saveSetup.Visible = _setupStep == 3;
         _back.Text = _setupStep == 1 && _addingComputer ? "Cancel" : "Back";
-        _saveSetup.Enabled = state.PeerSelected && state.LayoutValid;
+        _saveSetup.Enabled = state.PeerSelected && (state.ReceiveInput || state.LayoutValid);
         _stepTitle.Text = "STEP " + (_setupStep + 1) + " OF 4";
         _pageTitle.Text = DesktopSetupFlow.Titles[_setupStep];
         for (var i = 0; i < _stepButtons.Count; i++)
@@ -468,6 +582,15 @@ internal sealed class DesktopWindow : Form
         _fileGuide.Visible = _platformRow.Visible = showGuide;
         _pairedPanel.Visible = !showGuide && _peers.Items.Count > 1;
         _managePeers.Visible = !showGuide;
+        _rolePanel.Visible = !showGuide;
+        _roleHelp.Text = ReceiveInput
+            ? "Using the other computer’s keyboard and mouse. Change this in Pair computers."
+            : "Using this PC’s keyboard and mouse. Change this in Pair computers.";
+        _receiverArrangement.Visible = ReceiveInput;
+        if (ReceiveInput) _receiverArrangement.BringToFront();
+        _connect.Text = _connecting ? "Connecting…" : "Connect securely";
+        _connect.Enabled = !_connecting && state.PeerSelected;
+        _host.Enabled = !_connecting;
         _fileGuide.SuspendLayout();
         _sendTitle.Visible = _sendInstructions.Visible = _skipExport.Visible = !_windowsFileShared;
         _receiveTitle.Visible = _receiveInstructions.Visible = _exportAgain.Visible = _windowsFileShared;
@@ -488,7 +611,11 @@ internal sealed class DesktopWindow : Form
         _pause.Enabled = state.Sharing;
         _pause.Visible = state.Sharing;
         _permissionStatus.Text = state.ListenerReady ? "Windows is ready to link your devices." : "Waiting for network access. Reopen BatCave if the connection service could not start.";
-        _linkStatus.Text = !state.PeerSelected ? "Add your other computer in Pair computers first." : state.Sharing ? "Your keyboard and mouse are shared." : state.Connected ? "Your device is connected. Enable its input access, then choose Start sharing." : "In Pair computers, use the PC address to connect from your other device.";
+        _linkStatus.Text = !state.PeerSelected ? "Add your other computer in Pair computers first."
+            : state.Sharing ? ReceiveInput ? "This PC is ready for the other computer’s mouse and keyboard." : "Your keyboard and mouse are shared."
+            : state.Connected ? ReceiveInput ? "Choose Enable input on this PC. Then start sharing on the other computer."
+                : "Enable input on the other computer, then choose Start sharing here."
+            : "Open Pair computers to connect your devices.";
         _status.Text = DesktopSetupFlow.Status(state);
         _status.ForeColor = state.Connected ? DesktopTheme.Green : DesktopTheme.Muted;
         if (_notice is not null && DateTimeOffset.UtcNow < _noticeUntil) _status.Text = _notice;
@@ -502,13 +629,14 @@ internal sealed class DesktopWindow : Form
         {
             case SetupOperation.Export: ExportCard(); break;
             case SetupOperation.Next:
-                if (_setupStep == 2) SaveLayout();
+                if (_setupStep == 2 && !ReceiveInput) SaveLayout();
                 ShowStep(_setupStep + 1); break;
             case SetupOperation.Pair:
                 if (_setupStep != 1) ShowStep(1); else ImportCard();
                 break;
             case SetupOperation.Pause: Pause("paused by user"); break;
             case SetupOperation.Start:
+                if (ReceiveInput) { _agent.EnableReceiving(); break; }
                 var agents = System.Diagnostics.Process.GetProcessesByName("BatCave.WindowsAgent");
                 try
                 {
@@ -591,34 +719,39 @@ internal sealed class DesktopWindow : Form
             + "\n\nOn your other computer, open its security details and compare the entire code. Choose Yes only if they match. This approves the computer for input and optional clipboard sharing; sharing still needs Start sharing.",
             "Approve a computer", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) { return; }
         ApplyApproval(card);
-        Notice("Computer approved. Now connect from BatCave on that computer using this PC’s address.");
+        Notice("Computer approved. Connect using an address shown in BatCave on either computer.");
     }
 
     private void ApplyApproval(DeviceIdentityStore.PairingCard card)
     {
+        CancelConnect();
         Pause("pairing changed");
         _approvals.Approve(card);
         _selectedPeerId = card.DeviceId;
-        _platform.SelectedIndex = card.DeviceId.StartsWith("linux:", StringComparison.Ordinal) ? 1 : 0;
+        _platform.SelectedIndex = PlatformIndex(card.DeviceId);
         _hello = null; _addingComputer = false;
         _lan.DisconnectUnapprovedPeer();
         RefreshPeers();
         LoadPeerLayout();
+        LoadConnectionSettings();
         SaveSettings();
     }
 
     private void Unpair() => Guard(() =>
     {
         if (_peers.SelectedItem is not PeerItem item) { return; }
+        CancelConnect();
         Pause("device unpaired");
         _approvals.Remove(item.Card.DeviceId);
         _layoutStore.Remove(item.Card.DeviceId);
+        _connectionSettings.Remove(item.Card.DeviceId);
         _lan.DisconnectUnapprovedPeer();
         _selectedPeerId = null;
         _hello = null;
         _addingComputer = false;
         RefreshPeers();
         LoadPeerLayout();
+        LoadConnectionSettings();
         SaveSettings();
     });
 
@@ -637,7 +770,7 @@ internal sealed class DesktopWindow : Form
                 if (card.DeviceId == _selectedPeerId) { _peers.SelectedItem = item; }
             }
             if (_peers.SelectedItem is PeerItem selected)
-                _platform.SelectedIndex = selected.Card.DeviceId.StartsWith("linux:", StringComparison.Ordinal) ? 1 : 0;
+                _platform.SelectedIndex = PlatformIndex(selected.Card.DeviceId);
         }
         finally { _refreshingPeers = false; }
     }
@@ -704,14 +837,16 @@ internal sealed class DesktopWindow : Form
         if (!File.Exists(_settingsPath)) return null;
         try
         {
-            if (new FileInfo(_settingsPath).Length > 16384) return null;
+            if (new FileInfo(_settingsPath).Length > 131072) return null;
             return JsonSerializer.Deserialize<Settings>(File.ReadAllText(_settingsPath));
         }
         catch (Exception ex) when (ex is IOException or JsonException) { return null; }
     }
     private void SaveSettings()
     {
-        File.WriteAllText(_settingsPath + ".new", JsonSerializer.Serialize(new Settings(_selectedPeerId, _side.SelectedIndex != (int)PeerSide.Left, _agent.ClipboardSharingEnabled)));
+        if (_selectedPeerId is { } peer) _connectionSettings[peer] = new(_host.Text.Trim(), ReceiveInput);
+        File.WriteAllText(_settingsPath + ".new", JsonSerializer.Serialize(new Settings(_selectedPeerId,
+            _side.SelectedIndex != (int)PeerSide.Left, _agent.ClipboardSharingEnabled, _connectionSettings)));
         File.Move(_settingsPath + ".new", _settingsPath, overwrite: true);
     }
     private void PostUi(Action action)
@@ -721,25 +856,38 @@ internal sealed class DesktopWindow : Form
     }
     private void OnDisplaySettingsChanged(object? sender, EventArgs e) => PostUi(() =>
     {
+        CancelConnect();
         Pause("monitors changed"); _lan.Disconnect(); _hello = null; _monitors = DiscoverMonitors(); LoadPeerLayout();
         var b = SystemInformation.VirtualScreen;
         _lan.UpdateLocalBounds(new(b.Left, b.Top, b.Width, b.Height));
+        ResumeConnections();
     });
     private void Pause(string reason) { _sharing = false; _agent.StopSharingNow(reason); }
     private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
     {
         if (e.Mode == PowerModes.Suspend && !IsDisposed)
             ReleaseAndDisconnect("computer sleeping");
+        else if (e.Mode == PowerModes.Resume) PostUi(ResumeConnections);
     }
     private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
     {
         if (e.Reason is SessionSwitchReason.SessionLock or SessionSwitchReason.SessionLogoff && !IsDisposed)
             ReleaseAndDisconnect("session locked");
+        else if (e.Reason == SessionSwitchReason.SessionUnlock) PostUi(ResumeConnections);
+    }
+    private void ResumeConnections()
+    {
+        _reconnectSuspended = false;
+        _connectWanted = _selectedPeerId is not null && _host.Text.Trim().Length > 0;
+        _nextConnectAttempt = DateTimeOffset.UtcNow;
+        UpdateSetup();
     }
     private void ReleaseAndDisconnect(string reason)
     {
         Action cleanup = () =>
         {
+            _reconnectSuspended = true;
+            CancelConnect();
             Pause(reason);
             _lan.FlushAsync().GetAwaiter().GetResult();
             _lan.Disconnect();
