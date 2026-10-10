@@ -168,6 +168,9 @@ class CoreTests(unittest.TestCase):
         self.assertIn(("key", 42, False), backend.events)
         self.assertIn(("button", 272, False), backend.events)
         self.assertIn(("close",), backend.events)
+        session.epoch = 1; session.armed = True
+        session.handle(1, {"type": "cursor.handoff", "payload": {"targetDeviceId": "windows:test"}})
+        self.assertFalse(session.armed)
 
     def test_keyboard_extended_mapping_and_shortcut_hold_preservation(self):
         self.assertEqual(keycode(dict(virtualKey=0xA3, scanCode=29, isExtended=True)), 97)

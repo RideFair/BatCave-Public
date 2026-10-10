@@ -76,6 +76,7 @@ class InputSession:
         if errors:
             # Closing the virtual devices is the fail-safe if releases cannot be sent.
             self.backend.close()
+        return not errors
 
     def disconnect(self):
         self.pause()
@@ -91,8 +92,10 @@ class InputSession:
         if kind == "cursor.handoff":
             # Every handoff ends previous ownership before it can grant a new one.
             enabled = self.armed
-            self.pause()
-            self.armed = enabled
+            cleaned = self.pause()
+            self.armed = enabled and cleaned
+            if not self.armed:
+                return
             if payload.get("targetDeviceId") != self.local_id:
                 return
             if payload.get("targetDisplayId") != self.local_id + ":desktop":
