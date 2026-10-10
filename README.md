@@ -8,14 +8,15 @@ TLS 1.3 and must approve each other before sharing input.
 
 | Platform | Installer | Installation |
 | --- | --- | --- |
-| Windows 11 x64 | **[Download Windows installer (.exe)](https://github.com/RideFair/BatCave-Public/releases/download/v0.2.0/BatCave-0.2.0-Windows-x64-Setup.exe)** | Run the installer and open BatCave. .NET is included. |
-| Apple Silicon Mac, macOS 13+ | **[Download Mac installer (.dmg)](https://github.com/RideFair/BatCave-Public/releases/download/v0.2.0/BatCave-0.2.0-arm64.dmg)** | Drag the versioned app to Applications and open it. An existing BatCave app stays separate. |
-| Ubuntu 24.04 amd64 desktop | **[Download Linux installer (.deb)](https://github.com/RideFair/BatCave-Public/releases/download/v0.2.0/BatCave-Linux-0.2.0-amd64.deb)** | Open the package with your software installer, then launch BatCave. |
+| Windows 11 x64 | **[Download Windows installer (.exe)](https://github.com/RideFair/BatCave-Public/releases/download/untagged-3ef4492b468036bd2136/BatCave-0.2.0-Windows-x64-Setup.exe)** | Run the installer and open BatCave. .NET is included. |
+| Apple Silicon Mac, macOS 13+ | **[Download Mac installer (.dmg)](https://github.com/RideFair/BatCave-Public/releases/download/untagged-3ef4492b468036bd2136/BatCave-0.2.0-arm64.dmg)** | Drag the versioned app to Applications and open it. An existing BatCave app stays separate. |
+| Ubuntu 24.04 amd64 desktop | **[Download Linux installer (.deb)](https://github.com/RideFair/BatCave-Public/releases/download/untagged-3ef4492b468036bd2136/BatCave-Linux-0.2.0-amd64.deb)** | Open the package with your software installer, then launch BatCave. |
 
-Downloads are public and do not require a GitHub login.
-[Release details](https://github.com/RideFair/BatCave-Public/releases/tag/v0.2.0)
-include checksums and verification status. Windows is unsigned; Mac is ad-hoc
-signed and not notarized. Signing and physical-device checks remain pending.
+**Download access:** these installers are currently in a GitHub draft. Sign into
+an account with write access to this repository; other visitors cannot download
+them yet. [Release details](https://github.com/RideFair/BatCave-Public/releases/tag/untagged-3ef4492b468036bd2136)
+include checksums and the signing status. Windows is unsigned; Mac is ad-hoc signed
+and not notarized. Public binary publication awaits signing and device checks.
 
 ## Link your computers
 
@@ -26,7 +27,7 @@ Windows. **Pause sharing**, Escape, or F12 returns control to Windows.
 
 This source includes the Windows controller and the matching secure Mac and Linux
 apps. Live secure Mac/Linux input and fresh-device setup still need verification
-before a verified daily-use release. Linux currently receives Windows input;
+before the combined binary release. Linux currently receives Windows input;
 it cannot control Windows. WSL verifies builds and packages, but does not provide
 the desktop permission and input checks required for Linux.
 
