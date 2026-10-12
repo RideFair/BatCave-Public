@@ -51,7 +51,7 @@ jobs:
             done
           done
       - name: Upload synthetic GTK screenshots for review
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: BatCave-Linux-Setup-Screenshots
           path: /tmp/batcave-linux-screenshots/*.png
@@ -78,7 +78,7 @@ jobs:
           test ! -e /usr/bin/batcave-linux-preview
           test "$(cat "$profile/batcave/secure-preview/marker")" = 'retain existing user state'
       - name: Upload Linux installer and checksum
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: BatCave-Linux-amd64
           path: |
