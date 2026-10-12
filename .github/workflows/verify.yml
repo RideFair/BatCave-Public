@@ -65,7 +65,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Package privacy check failed' }
           & Operating_System_Specific/Windows/Packaging/Test-InstallerOnRunner.ps1 -Installer (Join-Path $packages 'BatCave-0.3.0-Windows-x64-Setup.exe')
       - name: Upload Windows installer and manifest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: BatCave-Windows-x64
           path: ${{ runner.temp }}/BatCave-Windows-packages/*
@@ -84,7 +84,7 @@ jobs:
           BATCAVE_RENDER_OUTPUT: ${{ runner.temp }}/batcave-macos-screenshots
         run: swift test --package-path Operating_System_Specific/MacOS
       - name: Upload synthetic Mac screenshots for review
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: BatCave-macOS-Setup-Screenshots
           path: ${{ runner.temp }}/batcave-macos-screenshots/*.png
@@ -103,7 +103,7 @@ jobs:
       - name: Verify versioned installation and desktop alias preservation
         run: python3 Operating_System_Specific/MacOS/Scripts/test_setup_preview_install.py
       - name: Upload Mac installer and manifest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: BatCave-macOS-${{ runner.arch }}
           path: Operating_System_Specific/MacOS/Build/SetupPreview/Packages/*
