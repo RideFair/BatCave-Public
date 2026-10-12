@@ -49,6 +49,28 @@ jobs:
           $report = $json | ConvertFrom-Json
           $packages = $report.projects | ForEach-Object { $_.frameworks } | ForEach-Object { @($_.topLevelPackages) + @($_.transitivePackages) }
           if (@($packages | Where-Object { $_.vulnerabilities }).Count -gt 0) { throw 'Vulnerable dependency reported' }
+      - name: Build and check Windows installer on disposable runner
+        shell: pwsh
+        run: |
+          $compilerSetup = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $compilerSetup
+          if ((Get-FileHash $compilerSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ne '9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732') { throw 'Compiler checksum mismatch' }
+          $compilerDirectory = Join-Path $env:RUNNER_TEMP 'inno6'
+          $install = Start-Process $compilerSetup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',('/DIR="' + $compilerDirectory + '"') -WindowStyle Hidden -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw 'Compiler setup failed' }
+          $packages = Join-Path $env:RUNNER_TEMP 'BatCave-Windows-packages'
+          & Operating_System_Specific/Windows/Packaging/Build-Installer.ps1 -InnoCompiler (Join-Path $compilerDirectory 'ISCC.exe') -OutputDirectory $packages
+          $publish = Get-ChildItem .build/installer -Directory -Filter 'win-x64-*' | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+          python Scripts/check_package_privacy.py $publish.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Package privacy check failed' }
+          & Operating_System_Specific/Windows/Packaging/Test-InstallerOnRunner.ps1 -Installer (Join-Path $packages 'BatCave-0.3.0-Windows-x64-Setup.exe')
+      - name: Upload Windows installer and manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: BatCave-Windows-x64
+          path: ${{ runner.temp }}/BatCave-Windows-packages/*
+          if-no-files-found: error
+          retention-days: 14
   macos:
     runs-on: macos-15
     steps:
