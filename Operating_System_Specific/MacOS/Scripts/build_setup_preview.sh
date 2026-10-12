@@ -72,7 +72,8 @@ ln -s /Applications "$STAGING_DIR/Applications"
 cat > "$STAGING_DIR/Start here.txt" <<'TXT'
 BatCave
 
-Drag the versioned BatCave app to Applications and open it on both computers.
+Download matching 0.3.0 installers only from RideFair/BatCave-Public on GitHub.
+Drag the versioned BatCave app to Applications and open BatCave on both computers.
 Its filename keeps an existing BatCave.app available. Open Nearby computers on
 both devices, choose the other computer, compare all eight digits and choose
 Codes match · Link and share on both screens. Required Mac input permissions are
@@ -84,11 +85,17 @@ specific app's Open Anyway control in System Settings > Privacy & Security.
 Keep Gatekeeper enabled. The DMG filename identifies the required architecture;
 macOS 13 or newer is required.
 
-Existing settings and other installed apps remain separate. Clipboard sharing
-and Open at login are optional. The local Files shelf does not send files between
-computers. Live secure Windows/Mac input, fresh-install permissions and recovery
-checks remain pending. This nearby-pairing candidate requires cross-platform
-review and physical-device verification before release.
+Existing setup is kept by default. For a fresh app-state test, pause sharing,
+quit other BatCave copies and turn off Open BatCave at login. Choose BatCave >
+Start fresh, review the backup location and confirm. BatCave backs up its entire
+setup and quits; reopen it to link your computers again. Existing device keys,
+apps and Mac permissions are kept. Reinstalling the app alone does not clear
+setup. Keep the private setup backup out of GitHub.
+
+Clipboard sharing and Open at login are optional. The local Files shelf does not
+send files between computers. This is a public clean-install test build. Fresh
+Mac permission onboarding, physical LAN/input and recovery remain to be verified
+on real devices before a daily-use release. Start fresh does not reset OS grants.
 TXT
 DMG="$PACKAGE_DIR/BatCave-$PREVIEW_VERSION-$PREVIEW_ARCH.dmg"
 hdiutil create -volname 'BatCave' -srcfolder "$STAGING_DIR" -ov -format UDZO "$DMG"

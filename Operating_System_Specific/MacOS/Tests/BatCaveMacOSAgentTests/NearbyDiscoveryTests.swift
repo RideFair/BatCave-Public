@@ -60,4 +60,69 @@ final class NearbyDiscoveryTests: XCTestCase {
         }
         XCTAssertEqual(cache.snapshot(now: now).count, 2)
     }
+
+    func testSearchAgainRetriesFailedSocketStartupAndReportsContinuingFailure() {
+        let firstFailure = expectation(description: "Initial socket failure visible")
+        let retryFailure = expectation(description: "Repeated socket failure visible")
+        let recovered = expectation(description: "Manual retry opens discovery socket")
+        let factory = RetryDiscoverySocketFactory()
+        let recorder = RetryDiscoveryRecorder(first: firstFailure, second: retryFailure, recovered: recovered)
+        let discovery = NearbyDiscovery(localID: "macos:fixture", announcement: { Data("{}".utf8) },
+            socketFactory: { try factory.open(port: $0) }, interfaceProvider: { [] },
+            onUpdate: { recorder.record($0) })
+        defer { discovery.stop() }
+
+        // An ephemeral socket and zero interfaces prevent multicast joins or
+        // announcements onto the user's LAN. The first two attempts fail before
+        // creating any socket; the third uses the real nonblocking socket setup.
+        discovery.start(port: 0)
+        wait(for: [firstFailure], timeout: 3)
+        XCTAssertFalse(recorder.latest?.running ?? true)
+        XCTAssertTrue(recorder.latest?.error?.contains("search again") ?? false)
+
+        discovery.refresh()
+        wait(for: [retryFailure], timeout: 3)
+        XCTAssertFalse(recorder.latest?.running ?? true)
+        XCTAssertNotNil(recorder.latest?.error)
+
+        discovery.refresh()
+        wait(for: [recovered], timeout: 3)
+        XCTAssertTrue(recorder.latest?.running ?? false)
+        XCTAssertEqual(factory.ports, [0, 0, 0], "Retry must retain the originally requested port")
+        XCTAssertTrue(recorder.latest?.computers.isEmpty ?? false)
+    }
+}
+
+private final class RetryDiscoverySocketFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requested = [UInt16]()
+    var ports: [UInt16] { lock.withLock { requested } }
+    func open(port: UInt16) throws -> Int32 {
+        let attempt = lock.withLock { requested.append(port); return requested.count }
+        if attempt <= 2 { throw PairingError("Injected startup failure") }
+        return try NearbyDiscovery.makeSocket(port: port)
+    }
+}
+
+private final class RetryDiscoveryRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshot: NearbyDiscoverySnapshot?
+    private var failures = 0
+    private var didRecover = false
+    private let first: XCTestExpectation
+    private let second: XCTestExpectation
+    private let recovered: XCTestExpectation
+    var latest: NearbyDiscoverySnapshot? { lock.withLock { snapshot } }
+    init(first: XCTestExpectation, second: XCTestExpectation, recovered: XCTestExpectation) {
+        self.first = first; self.second = second; self.recovered = recovered
+    }
+    func record(_ value: NearbyDiscoverySnapshot) {
+        lock.withLock { snapshot = value }
+        if !value.running && value.error != nil {
+            failures += 1
+            if failures == 1 { first.fulfill() }
+            if failures == 2 { second.fulfill() }
+        }
+        if value.running && !didRecover { didRecover = true; recovered.fulfill() }
+    }
 }

@@ -1,15 +1,16 @@
 # Mac first-time device setup
 
-BatCave runs on macOS 13+ on Apple Silicon with a separate protected profile.
-It does not replace the stable or development app, read their connection
-settings, or approve their hostname-based identities.
+BatCave runs on macOS 13+ on Apple Silicon. It retains the protected SecurePreview
+profile and Keychain identity for upgrades. Source builds create a separate
+versioned app and preserve installed working copies.
 
 Build `Scripts/build_setup_preview.sh`. The resulting DMG contains a versioned
 **BatCave-0.3.0.app**,
 an Applications shortcut, and first-run instructions. Drag the
 app into Applications and open it. The build script also produces a checksum
-and source/version manifest. Developer ID signing and notarization are release
-checks; do not claim release verification before those checks pass.
+and source/version manifest. The 0.3.0 download is prepared for clean-install
+testing, ad-hoc signed and unnotarized. Supported daily-use distribution still
+requires signing, notarization and the pending physical-device checks.
 `BATCAVE_PREVIEW_OUTPUT` may select a canonical directory inside this checkout's
 `Build` directory; paths outside it and symbolic-link destinations are refused.
 
@@ -39,6 +40,33 @@ foreground, for 180 seconds per local opening or Search again. Closing or leavin
 that screen actually unbinds it. Normal return handoffs stay quiet. Closing the
 window leaves a menu-bar app; Quit releases input and closes transports. Clipboard
 sharing and Open at login remain opt-in. No installed app is changed during review.
+
+## Start with a fresh setup
+
+Uninstalling an app does not remove its saved setup, Keychain identity or OS
+permissions. For a fresh app-state test, pause sharing, quit other BatCave copies
+and turn off Open BatCave at login. Choose **BatCave > Start fresh…** in the app
+menu or menu-bar icon. The confirmation shows the exact backup destination and
+defaults to Cancel. Confirming stops network/input sources, atomically renames
+the complete SecurePreview directory to a timestamp/UUID sibling backup and quits.
+Reopen the installed app to use Nearby computers with a new identity.
+
+The backup retains the original directory, files and modes. Existing Keychain
+keys/certificates, installed apps and Desktop alias are never removed by this
+action. Symlinked paths, changed directory identities, unsafe permissions and
+backup collisions are refused; no existing backup is overwritten. A failure
+after transport shutdown leaves setup in place and instructs you to quit/reopen.
+Keep backups private and out of GitHub, including diagnostic logs made by older
+versions. Restoring the original profile while the app is quit reuses its retained
+Keychain identity; the other computer must also use its matching original profile.
+
+This action does not reset Accessibility, Input Monitoring or Local Network
+permissions. Verify their initial status separately for a full permission test.
+A separate local test account preserves the working account's profile/Keychain;
+log out the working account to stop its listeners. Account separation alone is
+not claimed as proof of fresh OS permissions. Apple's
+[permission-reset guide](https://developer.apple.com/documentation/xcode/resetting-access-to-protected-resources-in-macos)
+describes explicitly targeting one app; no automatic reset runs here.
 
 ## Security and interoperability
 

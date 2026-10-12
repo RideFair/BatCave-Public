@@ -51,6 +51,8 @@ final class NearbyDiscovery: @unchecked Sendable {
     private let localID: String
     private let announcement: @Sendable () throws -> Data
     private let onUpdate: @MainActor @Sendable (NearbyDiscoverySnapshot) -> Void
+    private let socketFactory: @Sendable (UInt16) throws -> Int32
+    private let interfaceProvider: @Sendable () -> [LANInterface]
     private var socket: Int32 = -1
     private var receiveSource: DispatchSourceRead?
     private var timer: DispatchSourceTimer?
@@ -64,17 +66,27 @@ final class NearbyDiscovery: @unchecked Sendable {
     private var rateCount = 0
     private var receiveSuspended = false
     private var destinationPort: UInt16 = NearbyDiscovery.port
+    private var requestedPort: UInt16 = NearbyDiscovery.port
 
     init(localID: String, announcement: @escaping @Sendable () throws -> Data,
+         socketFactory: @escaping @Sendable (UInt16) throws -> Int32 = { try NearbyDiscovery.makeSocket(port: $0) },
+         interfaceProvider: @escaping @Sendable () -> [LANInterface] = { NearbyDiscovery.interfaces() },
          onUpdate: @escaping @MainActor @Sendable (NearbyDiscoverySnapshot) -> Void) {
         self.localID = localID; self.announcement = announcement; self.onUpdate = onUpdate
+        self.socketFactory = socketFactory; self.interfaceProvider = interfaceProvider
         cache = NearbyComputerCache(localID: localID)
     }
 
     func start(port: UInt16 = NearbyDiscovery.port) {
         queue.async { [weak self] in self?.startOnQueue(port: port) }
     }
-    func refresh() { queue.async { [weak self] in self?.announceOnQueue() } }
+    func refresh() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if self.socket < 0 { self.startOnQueue(port: self.requestedPort) }
+            else { self.announceOnQueue() }
+        }
+    }
     func stop() { queue.sync { stopOnQueue() } }
     func isLocalAddress(_ address: String) -> Bool {
         queue.sync { Self.isOnLAN(address, interfaces: networks) }
@@ -148,12 +160,9 @@ final class NearbyDiscovery: @unchecked Sendable {
         return result.sorted { $0.address < $1.address }
     }
 
-    private func startOnQueue(port: UInt16) {
-        guard socket == -1 else { return }
-        generation &+= 1
-        let currentGeneration = generation
+    static func makeSocket(port: UInt16) throws -> Int32 {
         let descriptor = Darwin.socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-        guard descriptor >= 0 else { failedStart(); return }
+        guard descriptor >= 0 else { throw PairingError("Discovery socket could not open.") }
         var yes: Int32 = 1; var buffer: Int32 = 65536; var ttl: UInt8 = 1; var loop: UInt8 = 0
         var bound = sockaddr_in(); bound.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         bound.sin_family = UInt8(AF_INET); bound.sin_port = port.bigEndian; bound.sin_addr.s_addr = INADDR_ANY
@@ -164,8 +173,20 @@ final class NearbyDiscovery: @unchecked Sendable {
             && withUnsafePointer(to: &bound) { ptr in
                 ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
             } == 0
-        guard configured, fcntl(descriptor, F_SETFL, O_NONBLOCK) == 0 else { Darwin.close(descriptor); failedStart(); return }
+        guard configured, fcntl(descriptor, F_SETFL, O_NONBLOCK) == 0 else {
+            Darwin.close(descriptor); throw PairingError("Discovery socket could not bind.")
+        }
         _ = setsockopt(descriptor, SOL_SOCKET, SO_RCVBUF, &buffer, socklen_t(MemoryLayout.size(ofValue: buffer)))
+        return descriptor
+    }
+    private func startOnQueue(port: UInt16) {
+        guard socket == -1 else { return }
+        requestedPort = port; generation &+= 1
+        let currentGeneration = generation
+        let descriptor: Int32
+        do { descriptor = try socketFactory(port) }
+        catch { failedStart(); return }
+        guard descriptor >= 0 else { failedStart(); return }
         socket = descriptor; destinationPort = port; error = nil; rateStart = Date(); rateCount = 0
         let source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: queue)
         source.setEventHandler { [weak self] in
@@ -189,7 +210,7 @@ final class NearbyDiscovery: @unchecked Sendable {
         publish()
     }
     private func refreshInterfaces() {
-        let next = Set(Self.interfaces())
+        let next = Set(interfaceProvider())
         for old in joined.subtracting(next) {
             var membership = membership(for: old)
             _ = setsockopt(socket, IPPROTO_IP, IP_DROP_MEMBERSHIP, &membership, socklen_t(MemoryLayout<ip_mreq>.size))
