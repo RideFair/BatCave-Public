@@ -7,8 +7,9 @@ closing their window; choose **Quit BatCave** there.
 
 1. Install the new package and open BatCave. If this computer has used BatCave
    before, choose **Start fresh** and confirm the backup. On Windows and Linux this is under
-   **Permissions**; Windows also has **BatCave - Start fresh** in its Start menu. Reopen BatCave
-   if the action asks you to. A computer with no saved setup needs no reset.
+   **Permissions**. On Mac, use **BatCave → Start fresh…** in the menu bar; pause
+   sharing and turn off **Open at login** first if enabled. Reopen BatCave when
+   asked. A computer with no saved setup needs no reset.
 2. Open BatCave on the other computer. Select it from nearby computers, compare
    the eight digits and choose **Codes match · Link and share** on both. Approve
    the system input permissions if asked. No file exchange or address entry is needed.
@@ -47,6 +48,7 @@ Windows upgrades the installed package in place. The Mac app has a versioned
 filename so older apps can remain available; copies still use the same profile
 unless Start fresh is chosen. The Linux package retains its original package ID
 for upgrades. None of these installers silently erase pairing state.
+Windows also provides **BatCave - Start fresh** in the Start menu.
 
 ## Verification scope
 
