@@ -109,6 +109,7 @@ final class SetupModel: ObservableObject {
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
     private var lockObserver: NSObjectProtocol?
+    private var shuttingDown = false
     private let inspectionOnly: Bool
     private let directory: URL
     private var profileURL: URL { directory.appendingPathComponent("setup.json") }
@@ -152,7 +153,7 @@ final class SetupModel: ObservableObject {
     }
 
     func refresh() {
-        guard !inspectionOnly else { return }
+        guard !inspectionOnly, !shuttingDown else { return }
         accessibility = AXIsProcessTrusted()
         inputMonitoring = CGPreflightListenEventAccess()
         if let lan {
@@ -167,7 +168,7 @@ final class SetupModel: ObservableObject {
     }
 
     @discardableResult func prepareIdentity() -> Bool {
-        guard !inspectionOnly else { return false }
+        guard !inspectionOnly, !shuttingDown else { return false }
         if identity != nil { return true }
         do {
             let value = try PairingIdentity.openOrCreate(at: directory, displayName: Host.current().localizedName ?? "My Mac")
@@ -211,6 +212,7 @@ final class SetupModel: ObservableObject {
     }
 
     func setForeground(_ active: Bool) {
+        guard !shuttingDown else { return }
         guard foreground != active else { return }
         foreground = active
         if active && page == .nearby { openRequested = false; refresh() }
@@ -227,6 +229,7 @@ final class SetupModel: ObservableObject {
     func showFileShelf() { closePairingWindow(); showFiles = true }
 
     func retry() {
+        guard !shuttingDown else { return }
         initialSharing.revoke(); locallyApprovedSession = nil
         pairing?.cancel(); confirmation = nil; waitingForApproval = false
         message = nil; discoveryError = nil; nextDial = .distantPast; dialedCandidate = nil
@@ -237,7 +240,7 @@ final class SetupModel: ObservableObject {
     }
 
     private func openPairingWindow() {
-        guard foreground, page == .nearby, !showFiles, identity != nil else { return }
+        guard !shuttingDown, foreground, page == .nearby, !showFiles, identity != nil else { return }
         openRequested = true
         pairing?.openWindow(port: 47873)
     }
@@ -326,7 +329,7 @@ final class SetupModel: ObservableObject {
     }
 
     private func reconnectKnownPeer() {
-        guard !inspectionOnly, let identity, let peer, let lan, !connected, Date() >= nextDial,
+        guard !inspectionOnly, !shuttingDown, let identity, let peer, let lan, !connected, Date() >= nextDial,
               identity.card.deviceId.utf16.lexicographicallyPrecedes(peer.deviceId.utf16) else { return }
         let candidate = candidates[Data(peer.deviceId.utf8)] ?? profile.host(for: peer.deviceId).map { ($0, profile.port(for: peer.deviceId)) }
         guard let candidate else { return }
@@ -337,7 +340,7 @@ final class SetupModel: ObservableObject {
     }
 
     private func authenticated(_ session: LanAuthenticatedSession) {
-        guard let current = lan?.authenticatedSession, current.sessionId == session.sessionId, current.activationGeneration == session.activationGeneration,
+        guard !shuttingDown, let current = lan?.authenticatedSession, current.sessionId == session.sessionId, current.activationGeneration == session.activationGeneration,
               sameDeviceID(session.deviceId, selectedPeerId), session.role == role,
               peer?.certificateSha256.caseInsensitiveCompare(session.fingerprint) == .orderedSame else { return }
         connected = true
@@ -395,7 +398,7 @@ final class SetupModel: ObservableObject {
     }
 
     @discardableResult func save() -> Bool {
-        guard !inspectionOnly else { return false }
+        guard !inspectionOnly, !shuttingDown else { return false }
         profile.peers = peers; profile.selectedPeerId = selectedPeerId.isEmpty ? nil : selectedPeerId
         profile.macOnRight = macOnRight
         do {
@@ -413,7 +416,7 @@ final class SetupModel: ObservableObject {
     }
 
     private func activateSharing(_ session: LanAuthenticatedSession) {
-        guard let current = lan?.authenticatedSession, current.sessionId == session.sessionId,
+        guard !shuttingDown, let current = lan?.authenticatedSession, current.sessionId == session.sessionId,
               current.activationGeneration == session.activationGeneration, role == session.role,
               sameDeviceID(session.deviceId, selectedPeerId),
               peer?.certificateSha256.caseInsensitiveCompare(session.fingerprint) == .orderedSame else { return }
@@ -422,10 +425,7 @@ final class SetupModel: ObservableObject {
             message = "Your computers are linked. Allow Accessibility and Input Monitoring, then choose Start sharing."
             return
         }
-        let others = NSWorkspace.shared.runningApplications.filter {
-            $0.processIdentifier != ProcessInfo.processInfo.processIdentifier && ["dev.batcave.macos-agent", "dev.batcave.setup-preview", "dev.batcave.macos-agent.secure-preview"].contains($0.bundleIdentifier ?? "")
-        }
-        guard others.isEmpty else { message = "Quit the other BatCave copy, then choose Start sharing here."; return }
+        guard !hasOtherRunningCopy() else { message = "Quit the other BatCave copy, then choose Start sharing here."; return }
         if !installed { installed = agent?.install(exitOnFailure: false) == true }
         guard installed else { message = "Reopen BatCave after granting both input permissions, then choose Start sharing."; return }
         if role == .source {
@@ -473,7 +473,42 @@ final class SetupModel: ObservableObject {
         } catch { message = "Could not change Open at login: " + error.localizedDescription }
     }
 
+    private func hasOtherRunningCopy() -> Bool {
+        NSWorkspace.shared.runningApplications.contains {
+            $0.processIdentifier != ProcessInfo.processInfo.processIdentifier && ["dev.batcave.macos-agent", "dev.batcave.setup-preview", "dev.batcave.macos-agent.secure-preview"].contains($0.bundleIdentifier ?? "")
+        }
+    }
+
+    private func validateFreshSetup() throws {
+        guard !inspectionOnly, !shuttingDown else { throw PairingError("Quit and reopen BatCave before starting fresh.") }
+        guard !sharing, lan?.isSecureInputEnabled != true, lan?.isSourceSharingEnabled != true else {
+            throw PairingError("Pause sharing before starting fresh.")
+        }
+        guard !hasOtherRunningCopy() else { throw PairingError("Quit the other BatCave copy before starting fresh.") }
+        let loginStatus = SMAppService.mainApp.status
+        guard loginStatus != .enabled, loginStatus != .requiresApproval else {
+            throw PairingError("Turn off Open BatCave at login before starting fresh.")
+        }
+    }
+
+    func prepareFreshSetup() throws -> FreshSetupBackup.Plan {
+        try validateFreshSetup()
+        pause(reason: "Preparing fresh setup")
+        return try FreshSetupBackup.prepare(at: directory)
+    }
+
+    func finishFreshSetup(_ plan: FreshSetupBackup.Plan) throws -> URL {
+        try validateFreshSetup()
+        // Stop callbacks before moving the directory so no delayed save can
+        // recreate the old profile after the atomic backup.
+        shutdown()
+        do { return try FreshSetupBackup.execute(plan) }
+        catch { throw PairingError("Your setup could not be moved: " + error.localizedDescription + " Quit and reopen BatCave before trying again.") }
+    }
+
     func shutdown() {
+        guard !shuttingDown else { return }
+        shuttingDown = true; foreground = false
         pause(reason: "App quit"); closePairingWindow(); discovery?.stop(); pairing?.dispose(); lan?.dispose(); timer?.invalidate()
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }; observers.removeAll()
         if let lockObserver { DistributedNotificationCenter.default().removeObserver(lockObserver); self.lockObserver = nil }
@@ -714,25 +749,25 @@ private final class SetupApplication: NSObject, NSApplicationDelegate, NSWindowD
             source.resume(); signals.append(source)
         }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 670), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        self.window = window
         window.title = "BatCave"
         window.minSize = NSSize(width: 800, height: 580)
         window.appearance = NSAppearance(named: .aqua)
         window.contentView = makeSetupHostingView(model: model)
         window.delegate = self
-        window.isReleasedWhenClosed = false; window.center(); window.makeKeyAndOrderFront(nil)
-        self.window = window
+        window.isReleasedWhenClosed = false; window.center()
         for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.updateForeground() }
             })
         }
         let menu = NSMenu()
-        for (title, action) in [("Open BatCave", #selector(show)), ("Files", #selector(files)), ("Pause sharing", #selector(pause)), ("Quit BatCave", #selector(quit))] {
+        for (title, action) in [("Open BatCave", #selector(show)), ("Files", #selector(files)), ("Pause sharing", #selector(pause)), ("Start fresh…", #selector(startFresh)), ("Quit BatCave", #selector(quit))] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: ""); item.target = self; menu.addItem(item)
         }
         let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         status.button?.title = "BatCave"; status.menu = menu; statusItem = status
-        NSApp.activate(ignoringOtherApps: true)
+        show()
     }
     private func updateForeground() { model.setForeground(NSApp.isActive && window?.isKeyWindow == true && window?.isVisible == true) }
     func windowDidBecomeKey(_ notification: Notification) { updateForeground() }
@@ -743,9 +778,38 @@ private final class SetupApplication: NSObject, NSApplicationDelegate, NSWindowD
     func applicationWillTerminate(_ notification: Notification) {
         model.shutdown(); observers.forEach { NotificationCenter.default.removeObserver($0) }
     }
-    @objc func show() { window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
+    @objc func show() {
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        updateForeground()
+    }
     @objc func files() { show(); model.showFileShelf() }
     @objc func pause() { model.pause() }
+    @objc func startFresh() {
+        do {
+            let plan = try model.prepareFreshSetup()
+            let confirmation = NSAlert()
+            confirmation.messageText = "Start fresh?"
+            confirmation.informativeText = "Your current setup will be saved here:\n\n\(plan.backupURL.path)\n\nBatCave will quit. Reopen it to link your computers again. Your existing device keys and Mac permissions will be kept."
+            confirmation.addButton(withTitle: "Cancel")
+            confirmation.addButton(withTitle: "Back up and start fresh")
+            guard confirmation.runModal() == .alertSecondButtonReturn else { return }
+            let backup = try model.finishFreshSetup(plan)
+            let result = NSAlert()
+            result.messageText = "Your setup is backed up"
+            result.informativeText = "Saved here:\n\n\(backup.path)\n\nReopen BatCave to start with a new setup. Keep this backup private; it contains your saved computer details."
+            result.addButton(withTitle: "Quit BatCave")
+            result.runModal()
+            NSApp.terminate(nil)
+        } catch {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Could not start fresh"
+            alert.informativeText = error.localizedDescription
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
     @objc func quit() { NSApp.terminate(nil) }
 }
 
@@ -757,6 +821,8 @@ func runSetupPreview() {
     app.delegate = delegate
     let menu = NSMenu()
     let item = NSMenuItem(); let appMenu = NSMenu()
+    let fresh = NSMenuItem(title: "Start fresh…", action: #selector(SetupApplication.startFresh), keyEquivalent: "")
+    fresh.target = delegate; appMenu.addItem(fresh); appMenu.addItem(.separator())
     appMenu.addItem(withTitle: "Quit BatCave", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     item.submenu = appMenu; menu.addItem(item); app.mainMenu = menu
     app.run()
