@@ -23,6 +23,8 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Compile the optional Windows transport fixture
         run: dotnet build Operating_System_Specific/Linux/tests/windows_interop/WindowsInterop.csproj -c Release
+      - name: Compile the isolated nearby pairing and pinned TLS fixture
+        run: dotnet build Operating_System_Specific/Linux/tests/pairing_interop/PairingInterop.csproj -c Release
   ubuntu:
     runs-on: ubuntu-24.04
     steps:
@@ -33,28 +35,40 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y build-essential pkg-config libei-dev libeis-dev \
-            python3-gi python3-cryptography gir1.2-gtk-4.0 gir1.2-secret-1 xvfb dbus-x11
+            python3-gi python3-cryptography gir1.2-gtk-4.0 gir1.2-secret-1 libxkbcommon0 xkb-data xvfb dbus-x11 \
+            adwaita-icon-theme librsvg2-common
       - name: Native EIS, TLS, lifecycle state and filesystem checks
         run: sh Operating_System_Specific/Linux/scripts/test.sh
       - name: Source privacy gate
         run: python3 Scripts/check_public_source.py
-      - name: Render idle GTK setup without permission or networking
+      - name: Check GTK approval gates and render setup at both sizes
         env:
           GSK_RENDERER: cairo
           PYTHONPATH: Operating_System_Specific/Linux:Operating_System_Specific/Linux/tests
         run: |
-          for view in permissions pair layout link files details; do
-            dbus-run-session -- xvfb-run -a python3 Operating_System_Specific/Linux/tests/render_desktop.py \
-              "/tmp/batcave-linux-$view.png" "$view" small
+          mkdir -p /tmp/batcave-linux-screenshots
+          for view in nearby nearby-selected nearby-approved nearby-blocked checking comparison approval-wait permissions layout link files details; do
+            for size in default small; do
+              args=()
+              if [ "$size" = small ]; then args=(small); fi
+              dbus-run-session -- xvfb-run -a python3 Operating_System_Specific/Linux/tests/render_desktop.py \
+                "/tmp/batcave-linux-screenshots/$view-$size.png" "$view" "${args[@]}"
+            done
           done
+      - name: Upload synthetic GTK screenshots for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: BatCave-Linux-Setup-Screenshots
+          path: /tmp/batcave-linux-screenshots/*.png
+          if-no-files-found: error
       - name: Build Debian package
         run: sh Operating_System_Specific/Linux/scripts/package.sh
       - name: Install and remove on the disposable runner
         run: |
           profile=$(mktemp -d /tmp/batcave-package-check.XXXXXXXX)
           export XDG_DATA_HOME="$profile"
-          sudo apt-get install -y ./Operating_System_Specific/Linux/.build/BatCave-Linux-0.2.0-amd64.deb
-          test "$(batcave-linux-preview --version)" = '0.2.0'
+          sudo apt-get install -y ./Operating_System_Specific/Linux/.build/BatCave-Linux-0.3.0-amd64.deb
+          test "$(batcave-linux-preview --version)" = '0.3.0'
           batcave-linux-preview --diagnose > /tmp/batcave-diagnose.json || test "$?" = 2
           test ! -e "$profile/batcave/secure-preview/identity.json"
           mkdir -p "$profile/batcave/secure-preview"
@@ -62,3 +76,11 @@ jobs:
           sudo apt-get remove -y batcave-linux-preview
           test ! -e /usr/bin/batcave-linux-preview
           test "$(cat "$profile/batcave/secure-preview/marker")" = 'retain existing user state'
+      - name: Upload Linux installer and checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: BatCave-Linux-amd64
+          path: |
+            Operating_System_Specific/Linux/.build/BatCave-Linux-0.3.0-amd64.deb
+            Operating_System_Specific/Linux/.build/SHA256SUMS
+          if-no-files-found: error

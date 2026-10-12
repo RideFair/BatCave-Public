@@ -126,6 +126,36 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(inbox.bytes, 32)
         self.assertEqual(inbox.drain(), [(2, "connected", {})])
 
+    def test_fragmented_frames_keep_first_byte_permission_generation(self):
+        reader = FrameReader()
+        reader.feed(b'{"old":', 1)
+        reader.feed(b'true}\n{"new":true}\n', 2)
+        self.assertEqual(reader.take(), b'{"old":true}')
+        self.assertEqual(reader.last_generation, 1)
+        self.assertEqual(reader.take(), b'{"new":true}')
+        self.assertEqual(reader.last_generation, 2)
+        self.assertEqual(reader.segments, [])
+
+    def test_pause_and_reenable_reject_queued_handoff_and_input(self):
+        backend = Backend(); session = InputSession("linux:test", backend)
+        session.connected(1); bounds = Bounds(0, 0, 1920, 1080); session.enable(bounds)
+        old_generation = session.generation
+        handoff = {"type": "cursor.handoff", "payload": dict(targetDeviceId="linux:test",
+                   targetDisplayId="linux:test:desktop", targetEdge="left", targetPosition=0.5,
+                   targetX=5000, targetY=-2000)}
+        key = {"type": "input.key", "payload": dict(virtualKey=0xA0, scanCode=42,
+                                                    isExtended=False, isKeyUp=False)}
+        session.pause(); session.enable(bounds)
+        session.handle(1, handoff, old_generation); session.handle(1, key, old_generation)
+        self.assertFalse(session.owns_cursor or session.keys)
+        current = session.generation
+        session.handle(1, handoff, current); session.handle(1, key, current)
+        self.assertTrue(session.owns_cursor); self.assertEqual(session.keys, {42})
+        session.handle(1, {"type": "control.testStop", "payload": {"reason": "paused"}}, current)
+        session.enable(bounds)
+        session.handle(1, handoff, current); session.handle(1, key, current)
+        self.assertFalse(session.owns_cursor or session.keys)
+
     def test_fresh_handoff_enablement_and_cleanup(self):
         backend = Backend(); session = InputSession("linux:test", backend)
         session.connected(1)

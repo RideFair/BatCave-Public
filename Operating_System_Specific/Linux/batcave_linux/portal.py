@@ -12,8 +12,9 @@ SESSION = "org.freedesktop.portal.Session"
 
 
 class Portal:
-    def __init__(self, backend, changed):
+    def __init__(self, backend, changed, interface=REMOTE):
         self.backend, self.changed = backend, changed
+        self.interface = interface
         self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         self.session = None
         self.epoch = 0
@@ -55,7 +56,7 @@ class Portal:
                 if epoch == self.epoch:
                     self.fail("The desktop input permission request failed.")
 
-        self.bus.call(DESTINATION, PATH, REMOTE, method, GLib.Variant(signature, arguments),
+        self.bus.call(DESTINATION, PATH, self.interface, method, GLib.Variant(signature, arguments),
                       GLib.VariantType.new("(o)"), Gio.DBusCallFlags.NONE, 5000, self.cancel, returned, None)
 
     def _response(self, _bus, _sender, path, _interface, _signal, parameters, *_):

@@ -6,7 +6,7 @@ if test -n "$(git -C "$root" status --porcelain)"; then
     exit 1
 fi
 sh "$root/scripts/build.sh"
-version=0.2.0
+version=0.3.0
 architecture=$(dpkg --print-architecture)
 filename="BatCave-Linux-${version}-${architecture}.deb"
 output="$root/.build"
@@ -18,12 +18,12 @@ Package: batcave-linux-preview
 Version: $version
 Architecture: $architecture
 Maintainer: BatCave Contributors <contributors@example.invalid>
-Depends: python3 (>= 3.12), python3-gi, python3-cryptography (>= 41), gir1.2-gtk-4.0 (>= 4.12), gir1.2-secret-1, libei1 (>= 1.2)
+Depends: python3 (>= 3.12), python3-gi, python3-cryptography (>= 41), gir1.2-gtk-4.0 (>= 4.12), gir1.2-secret-1, libei1 (>= 1.2), libxkbcommon0
 Section: net
 Priority: optional
 Description: BatCave for Linux
- Receives input from explicitly approved Windows hosts over mutual TLS 1.3.
- Requires a desktop session with the RemoteDesktop input portal.
+ Shares input with explicitly approved computers over mutual TLS 1.3.
+ Requires RemoteDesktop to receive or InputCapture to send desktop input.
  Live Wayland interoperability is an outstanding release gate.
 EOF
 mkdir -p "$stage/usr/lib/batcave-linux-preview/batcave_linux"

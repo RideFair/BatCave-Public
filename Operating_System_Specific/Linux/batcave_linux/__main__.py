@@ -11,7 +11,8 @@ from . import __version__
 
 def diagnose():
     result = {"version": __version__, "platform": platform.system(), "python": platform.python_version(),
-              "tls13": ssl.HAS_TLSv1_3, "libei": bool(ctypes.util.find_library("ei")), "desktopPortal": False}
+              "tls13": ssl.HAS_TLSv1_3, "libei": bool(ctypes.util.find_library("ei")), "desktopPortal": False,
+              "capturePortal": False, "xkbcommon": bool(ctypes.util.find_library("xkbcommon"))}
     try:
         import gi
         gi.require_version("Gtk", "4.0")
@@ -19,15 +20,21 @@ def diagnose():
         from gi.repository import Gio, GLib, Gtk
         result["gtk"] = Gtk.get_major_version()
         bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-        reply = bus.call_sync("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
-                  "org.freedesktop.DBus.Properties", "GetAll", GLib.Variant("(s)", ("org.freedesktop.portal.RemoteDesktop",)),
+        for interface, key in (("RemoteDesktop", "desktopPortal"), ("InputCapture", "capturePortal")):
+            try:
+                reply = bus.call_sync("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+                  "org.freedesktop.DBus.Properties", "GetAll", GLib.Variant("(s)", ("org.freedesktop.portal." + interface,)),
                   GLib.VariantType.new("(a{sv})"), Gio.DBusCallFlags.NONE, 2000, None).unpack()[0]
-        result["desktopPortal"] = reply.get("version", 0) >= 2 and reply.get("AvailableDeviceTypes", 0) & 3 == 3
-        result["portalVersion"] = reply.get("version", 0)
+                result[key] = reply.get("version", 0) >= (2 if interface == "RemoteDesktop" else 1) and \
+                              reply.get("AvailableDeviceTypes" if interface == "RemoteDesktop" else "SupportedCapabilities", 0) & 3 == 3
+                result["portalVersion" if interface == "RemoteDesktop" else "capturePortalVersion"] = reply.get("version", 0)
+            except Exception:
+                pass
     except Exception:
-        result["reason"] = "A running desktop session with GTK 4, libsecret and the RemoteDesktop portal is required."
+        result["reason"] = "A running desktop session with GTK 4, libsecret and an input portal is required."
     print(json.dumps(result, indent=2))
-    return 0 if result["desktopPortal"] and result["tls13"] and result["libei"] else 2
+    available = result["desktopPortal"] or result["capturePortal"] and result["xkbcommon"]
+    return 0 if available and result["tls13"] and result["libei"] else 2
 
 
 def main(argv=None):

@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=BatCave
-Comment=Use your Windows keyboard and mouse on Linux
+Comment=Share your keyboard and mouse with approved computers
 Exec=batcave-linux-preview
 Icon=input-mouse
 Terminal=false
