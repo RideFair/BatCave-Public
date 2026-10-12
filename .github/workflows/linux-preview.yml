@@ -40,6 +40,7 @@ jobs:
           GSK_RENDERER: cairo
           PYTHONPATH: Operating_System_Specific/Linux:Operating_System_Specific/Linux/tests
         run: |
+          dbus-run-session -- xvfb-run -a python3 Operating_System_Specific/Linux/tests/fresh_desktop.py
           mkdir -p /tmp/batcave-linux-screenshots
           for view in nearby nearby-selected nearby-approved nearby-blocked checking comparison approval-wait permissions layout link files details; do
             for size in default small; do

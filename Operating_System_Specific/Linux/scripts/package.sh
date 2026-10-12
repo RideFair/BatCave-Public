@@ -24,7 +24,7 @@ Priority: optional
 Description: BatCave for Linux
  Shares input with explicitly approved computers over mutual TLS 1.3.
  Requires RemoteDesktop to receive or InputCapture to send desktop input.
- Live Wayland interoperability is an outstanding release gate.
+ Physical desktop input and recovery validation remain pending.
 EOF
 mkdir -p "$stage/usr/lib/batcave-linux-preview/batcave_linux"
 # Only reviewed, tracked Python source enters the package.

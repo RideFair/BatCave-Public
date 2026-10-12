@@ -6,8 +6,8 @@ or launching the new one. Windows 0.2.0/0.2.1 may still be in the system tray af
 closing their window; choose **Quit BatCave** there.
 
 1. Install the new package and open BatCave. If this computer has used BatCave
-   before, choose **Start fresh** and confirm the backup. On Windows this is under
-   **Permissions**, or in the Start menu as **BatCave - Start fresh**. Reopen BatCave
+   before, choose **Start fresh** and confirm the backup. On Windows and Linux this is under
+   **Permissions**; Windows also has **BatCave - Start fresh** in its Start menu. Reopen BatCave
    if the action asks you to. A computer with no saved setup needs no reset.
 2. Open BatCave on the other computer. Select it from nearby computers, compare
    the eight digits and choose **Codes match · Link and share** on both. Approve

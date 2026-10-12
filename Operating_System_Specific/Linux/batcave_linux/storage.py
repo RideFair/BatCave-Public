@@ -1,6 +1,7 @@
 """User-owned, bounded, symlink-resistant state and atomic replacement."""
 
 import json
+import fcntl
 import os
 import re
 import stat
@@ -68,6 +69,12 @@ class StateDirectory:
             os.close(self.fd)
             self.fd = -1
 
+    def lock_for_application(self):
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError("This setup is open in another BatCave session. Quit that copy first.") from error
+
     def __enter__(self):
         return self
 
@@ -80,3 +87,35 @@ def profile_path():
     if root and not os.path.isabs(root):
         raise ValueError("XDG_DATA_HOME must be an absolute path.")
     return Path(root or Path.home() / ".local" / "share") / "batcave" / "secure-preview"
+
+
+def backup_profile(state):
+    """Rename a stopped app's locked profile; keep its keyring secret untouched."""
+    path = state.path.absolute()
+    if path.name != "secure-preview" or path.parent == Path(path.anchor):
+        raise ValueError("Unexpected BatCave profile. Nothing was moved.")
+    for component in (path, *path.parents):
+        info = component.lstat()
+        if not stat.S_ISDIR(info.st_mode):
+            raise ValueError("The setup path uses a link or is not a folder. Nothing was moved.")
+    current, opened = path.stat(), os.fstat(state.fd)
+    if current.st_uid != os.getuid() or stat.S_IMODE(current.st_mode) != 0o700:
+        raise PermissionError("The setup folder must be private and owned by you. Nothing was moved.")
+    if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+        raise ValueError("The setup folder changed. Nothing was moved.")
+    state.lock_for_application()
+    destination = path.with_name("secure-preview-backup-" + uuid.uuid4().hex)
+    # Linux renameat2 refuses any existing destination, including a racing name.
+    # A single rename preserves file modes and cannot leave a partial backup.
+    import ctypes
+    library = ctypes.CDLL(None, use_errno=True)
+    rename = library.renameat2
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    parent = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        if rename(parent, os.fsencode(path.name), parent, os.fsencode(destination.name), 1) != 0:
+            raise OSError(ctypes.get_errno(), "Could not back up setup; the original folder was kept.")
+    finally:
+        os.close(parent)
+    return destination

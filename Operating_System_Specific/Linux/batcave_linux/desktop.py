@@ -19,7 +19,7 @@ from .input import InputSession
 from .source import SourceSession
 from .portal import Portal
 from .protocol import Bounds
-from .storage import StateDirectory, profile_path
+from .storage import StateDirectory, profile_path, backup_profile
 from .transfers import MAX_BATCH, MAX_FILE, leaf_name
 from .transport import Connection, Inbox
 from .setup_flow import STEP_TITLES, SetupState, primary_action
@@ -200,6 +200,10 @@ class Window(Gtk.ApplicationWindow):
         self.permission_explanation = text("Your desktop will ask before BatCave can receive keyboard and mouse input.", "muted")
         permissions.append(self.permission_explanation)
         permissions.append(text("Access alone doesn't start sharing. You'll choose a trusted computer next.", "muted"))
+        self.fresh_start = button("Start fresh…", self._request_fresh_start)
+        self.fresh_start.set_sensitive(False)
+        permissions.append(self.fresh_start)
+        permissions.append(text("Save a backup of this setup and link your computers again.", "muted"))
         self.pages.add_named(permissions, "0")
 
         pair = card("Your computers, together.", "Open BatCave on both computers, choose one below, then compare the code.")
@@ -456,6 +460,7 @@ class Window(Gtk.ApplicationWindow):
         state = None
         try:
             state = StateDirectory(profile_path())
+            state.lock_for_application()
             identity = Identity.open(state, SecretVault())
             approvals = Approvals(state)
             GLib.idle_add(self._ready, state, identity, approvals)
@@ -467,6 +472,7 @@ class Window(Gtk.ApplicationWindow):
         if self.shutting_down:
             state.close(); return False
         self.state, self.identity, self.approvals = state, identity, approvals
+        self.fresh_start.set_sensitive(True)
         self.input = InputSession(identity.card.device_id, self.backend)
         self.connection = Connection(identity, self.inbox, lambda: self.input.generation,
                                       lambda peer: self.approvals.cards.get(peer.device_id) == peer)
@@ -1012,7 +1018,42 @@ class Window(Gtk.ApplicationWindow):
         try: action()
         except Exception as error: self._error(str(error))
 
-    def _close(self, *_):
+    def _request_fresh_start(self):
+        if not self.state or self.shutting_down: return
+        dialog = Gtk.MessageDialog(transient_for=self, modal=True,
+                                   message_type=Gtk.MessageType.WARNING, text="Start fresh?")
+        dialog.format_secondary_text("Stop sharing and save your current setup in a backup folder under:\n"
+                                     + str(self.state.path.parent)
+                                     + "\n\nYour original key stays in the keyring. System permissions stay as they are.")
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Back up and start fresh", Gtk.ResponseType.ACCEPT)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        def response(widget, result):
+            widget.destroy()
+            if result == Gtk.ResponseType.ACCEPT: self._finish_fresh_start()
+        dialog.connect("response", response); dialog.present()
+
+    def _finish_fresh_start(self):
+        if not self.state or self.shutting_down: return
+        try:
+            self._close(close_state=False)
+            backup = backup_profile(self.state)
+            message = "Your previous setup is saved here:\n" + str(backup) + "\n\nOpen BatCave again to link your computers from scratch."
+            title = "Ready to start fresh"
+        except Exception:
+            message = "Your setup could not be backed up. It has not been reset. Quit other BatCave sessions and reopen this app."
+            title = "Setup was kept"
+        finally:
+            self.state.close()
+        self.get_child().set_sensitive(False)
+        dialog = Gtk.MessageDialog(transient_for=self, modal=True, text=title, buttons=Gtk.ButtonsType.CLOSE)
+        dialog.format_secondary_text(message)
+        def response(widget, _result):
+            widget.destroy(); self.get_application().quit()
+        dialog.connect("response", response); dialog.present()
+
+    def _close(self, *_, close_state=True):
+        if self.shutting_down: return False
         self.shutting_down = True
         GLib.source_remove(self.tick)
         self._stop()
@@ -1021,7 +1062,7 @@ class Window(Gtk.ApplicationWindow):
         if self.pairing: self.pairing.close()
         for bus, subscription in self.bus_subscriptions: bus.signal_unsubscribe(subscription)
         self.backend.close(); self.capture_backend.close(); self._clear_files()
-        if self.state: self.state.close()
+        if close_state and self.state: self.state.close()
         return False
 
 

@@ -6,8 +6,8 @@ route passive libei compositor events over real Linux/Linux sockets into isolate
 native receiving devices. Physical desktop permissions and crossings still need testing.
 The Windows CNG/SChannel transport and Linux/OpenSSL client passed a real mutual
 TLS 1.3 handshake and identity-bound hello exchange through a local WSL interface.
-This build remains under development. A verified daily-use Linux release still
-requires the live desktop checks below.
+Version 0.3.0 is packaged for clean-installation testing. Physical daily-use
+validation still requires the desktop checks below.
 
 ## Desktop requirements
 
@@ -42,13 +42,18 @@ sudo apt install ./.build/BatCave-Linux-0.3.0-amd64.deb
 Packaging requires a clean committed source tree. It creates a fresh stage,
 copies only tracked application source, and builds a Debian package for the
 current architecture. It appears in the application launcher as **BatCave**.
-This branch's app and Debian package version are **0.3.0**. Its build does not
-replace frozen 0.2.x candidates. The existing `batcave-linux-preview`
+The app and Debian package version are **0.3.0**. Earlier release assets remain unchanged. The existing `batcave-linux-preview`
 package and command names remain for upgrade compatibility. Installing upgrades that package,
 separate from other BatCave installations. Per-user state stays under
 `$XDG_DATA_HOME/batcave/secure-preview`, defaulting to
 `~/.local/share/batcave/secure-preview`. Removal leaves identity and approvals
 available for a later reinstall; it does not reset trusted peers silently.
+
+For a fresh pairing test, choose **Permissions → Start fresh**. After confirmation,
+BatCave stops sharing, backs up the entire profile and asks you to reopen it.
+The original keyring secret remains available for restoring the backup. No system
+permission is reset. The app refuses a linked profile path or a profile open in
+another current-version session. Quit older copies before starting the test.
 
 Use `batcave-linux-preview --diagnose` to check prerequisites without creating an
 identity, connecting to a peer or requesting input permission. To run from source,
