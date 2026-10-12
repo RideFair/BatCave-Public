@@ -11,6 +11,32 @@ from test_core import MemoryVault
 
 
 class FreshSetupTests(unittest.TestCase):
+    def test_startup_cannot_lock_a_stale_fd_after_reset(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "secure-preview"
+            with StateDirectory(path) as first, StateDirectory(path) as delayed:
+                first.lock_for_application()
+                first.write("identity.json", b"synthetic old identity")
+                backup = backup_profile(first)
+                first.close()
+                with self.assertRaises(RuntimeError): delayed.lock_for_application()
+                with StateDirectory(path) as replacement:
+                    replacement.lock_for_application()
+                    with self.assertRaises(RuntimeError): delayed.lock_for_application()
+                self.assertEqual((backup / "identity.json").read_bytes(), b"synthetic old identity")
+
+    def test_other_user_writable_parent_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "secure-preview"
+            with StateDirectory(path) as state:
+                state.lock_for_application()
+                os.chmod(root, 0o777)
+                try:
+                    with self.assertRaises(RuntimeError): backup_profile(state)
+                    self.assertTrue(path.is_dir())
+                    self.assertEqual(list(Path(root).iterdir()), [path])
+                finally: os.chmod(root, 0o700)
+
     def test_backup_restore_keeps_original_identity_and_keyring(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "secure-preview"

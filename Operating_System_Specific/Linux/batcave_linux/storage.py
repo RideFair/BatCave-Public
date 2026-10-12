@@ -74,6 +74,20 @@ class StateDirectory:
             fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise RuntimeError("This setup is open in another BatCave session. Quit that copy first.") from error
+        try:
+            # An fd opened before another process's reset may now refer to its
+            # backup. Never unlock that old identity as the current profile.
+            parent = _open_profile_parent(self.path.absolute())
+            try:
+                current = os.stat(self.path.name, dir_fd=parent, follow_symlinks=False)
+                opened = os.fstat(self.fd)
+                if not stat.S_ISDIR(current.st_mode) or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+                    raise RuntimeError("The setup folder changed. Reopen BatCave; no identity was replaced.")
+            finally:
+                os.close(parent)
+        except Exception as error:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            raise RuntimeError("The setup folder changed or its location is not private. Reopen BatCave; no identity was replaced.") from error
 
     def __enter__(self):
         return self
@@ -87,6 +101,30 @@ def profile_path():
     if root and not os.path.isabs(root):
         raise ValueError("XDG_DATA_HOME must be an absolute path.")
     return Path(root or Path.home() / ".local" / "share") / "batcave" / "secure-preview"
+
+
+def _open_profile_parent(path):
+    """Walk protected ancestry without following links; return its pinned fd."""
+    if not path.is_absolute() or ".." in path.parts:
+        raise ValueError("Unexpected setup path. Nothing was moved.")
+    fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        for component in path.parent.parts[1:]:
+            next_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            os.close(fd); fd = next_fd
+            info = os.fstat(fd)
+            # Root-owned sticky ancestors such as /tmp are safe above a private
+            # parent: other users cannot replace our owned child there.
+            sticky_root = info.st_uid == 0 and bool(info.st_mode & stat.S_ISVTX)
+            if info.st_uid not in {0, os.getuid()} or info.st_mode & 0o022 and not sticky_root:
+                raise PermissionError("The setup location permits other-user changes. Nothing was moved.")
+        parent = os.fstat(fd)
+        if parent.st_uid != os.getuid() or parent.st_mode & 0o022:
+            raise PermissionError("The setup parent must be owned by you and protected from other-user changes. Nothing was moved.")
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
 
 
 def backup_profile(state):
@@ -112,8 +150,11 @@ def backup_profile(state):
     rename = library.renameat2
     rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
     rename.restype = ctypes.c_int
-    parent = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    parent = _open_profile_parent(path)
     try:
+        current = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+        if not stat.S_ISDIR(current.st_mode) or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+            raise ValueError("The setup folder changed. Nothing was moved.")
         if rename(parent, os.fsencode(path.name), parent, os.fsencode(destination.name), 1) != 0:
             raise OSError(ctypes.get_errno(), "Could not back up setup; the original folder was kept.")
     finally:
