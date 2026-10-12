@@ -44,6 +44,7 @@ artifacts/
 identity.json
 approved-peers.json
 desktop-settings.json
+audio-settings.json
 topology.secure.json
 MacOSAgent.conf
 
