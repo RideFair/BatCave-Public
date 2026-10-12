@@ -16,8 +16,8 @@ closing their window; choose **Quit BatCave** there.
    window. Cross back, pause, then quit and reopen one app. It should reconnect
    with input paused; resume sharing explicitly on both computers.
 
-If the permission prompt outlasts the initial approval, use the sharing action in
-**Link devices**. **Arrange screens** is optional. Test a held modifier and mouse
+If the permission prompt outlasts the initial approval, choose **Start sharing**
+or **Enable input** on each computer. **Arrange screens** is optional. Test a held modifier and mouse
 button in a disposable window before relying on the app for daily use: stopping
 or disconnecting must release both.
 

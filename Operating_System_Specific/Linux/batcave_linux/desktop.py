@@ -466,7 +466,7 @@ class Window(Gtk.ApplicationWindow):
             GLib.idle_add(self._ready, state, identity, approvals)
         except Exception:
             if state: state.close()
-            GLib.idle_add(self._error, "Could not unlock your BatCave identity. Check your desktop keyring and private state directory; no identity was replaced.")
+            GLib.idle_add(self._error, "Could not open your BatCave setup. Quit any other BatCave session, then check that your desktop keyring is unlocked. No identity was replaced.")
 
     def _ready(self, state, identity, approvals):
         if self.shutting_down:
@@ -1022,7 +1022,7 @@ class Window(Gtk.ApplicationWindow):
         if not self.state or self.shutting_down: return
         dialog = Gtk.MessageDialog(transient_for=self, modal=True,
                                    message_type=Gtk.MessageType.WARNING, text="Start fresh?")
-        dialog.format_secondary_text("Stop sharing and save your current setup in a backup folder under:\n"
+        dialog.set_property("secondary-text", "Stop sharing and save your current setup in a backup folder under:\n"
                                      + str(self.state.path.parent)
                                      + "\n\nYour original key stays in the keyring. System permissions stay as they are.")
         dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
@@ -1040,14 +1040,14 @@ class Window(Gtk.ApplicationWindow):
             backup = backup_profile(self.state)
             message = "Your previous setup is saved here:\n" + str(backup) + "\n\nOpen BatCave again to link your computers from scratch."
             title = "Ready to start fresh"
-        except Exception:
-            message = "Your setup could not be backed up. It has not been reset. Quit other BatCave sessions and reopen this app."
+        except Exception as error:
+            message = "Your setup was kept.\n\n" + str(error) + "\n\nReopen BatCave after resolving this problem."
             title = "Setup was kept"
         finally:
             self.state.close()
         self.get_child().set_sensitive(False)
         dialog = Gtk.MessageDialog(transient_for=self, modal=True, text=title, buttons=Gtk.ButtonsType.CLOSE)
-        dialog.format_secondary_text(message)
+        dialog.set_property("secondary-text", message)
         def response(widget, _result):
             widget.destroy(); self.get_application().quit()
         dialog.connect("response", response); dialog.present()

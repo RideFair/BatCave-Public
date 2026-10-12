@@ -27,8 +27,9 @@ on both screens. No connection files or network addresses are needed.
 The computer that starts pairing supplies the keyboard and mouse. BatCave places
 the other screen on its right; **Arrange screens** lets you match your desk.
 Approve the system permissions when asked. You can change input roles later.
-If permission setup takes longer than the initial approval window, use the sharing
-action in **Link devices**. Reconnect stays paused until you resume sharing.
+If permission setup takes longer than the initial approval window, choose
+**Start sharing** (or **Enable input** on the receiver). Reconnect stays paused
+until you resume sharing on both computers.
 
 Use 0.3.0 on both computers. Existing pairings survive upgrades. For a first-time
 setup test on a computer that already used BatCave, see the short
