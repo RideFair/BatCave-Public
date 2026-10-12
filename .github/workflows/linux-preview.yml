@@ -1,13 +1,7 @@
 name: Verify Linux
 on:
   push:
-    paths:
-      - 'Operating_System_Specific/Linux/**'
-      - '.github/workflows/linux-preview.yml'
   pull_request:
-    paths:
-      - 'Operating_System_Specific/Linux/**'
-      - '.github/workflows/linux-preview.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -63,6 +57,12 @@ jobs:
           if-no-files-found: error
       - name: Build Debian package
         run: sh Operating_System_Specific/Linux/scripts/package.sh
+      - name: Inspect Linux package contents for private artifacts
+        run: |
+          package=$(mktemp -d /tmp/batcave-package-audit.XXXXXXXX)
+          dpkg-deb -x Operating_System_Specific/Linux/.build/BatCave-Linux-0.3.0-amd64.deb "$package"
+          python3 Scripts/check_package_privacy.py "$package"
+          grep -Fx "Commit: $(git rev-parse HEAD)" "$package/usr/share/doc/batcave-linux-preview/build-info.txt"
       - name: Install and remove on the disposable runner
         run: |
           profile=$(mktemp -d /tmp/batcave-package-check.XXXXXXXX)

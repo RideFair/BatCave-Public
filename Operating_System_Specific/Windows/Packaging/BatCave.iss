@@ -5,7 +5,7 @@
   #define PackageDirectory "."
 #endif
 #ifndef AppVersion
-  #define AppVersion "0.2.0"
+  #define AppVersion "0.3.0"
 #endif
 
 [Setup]
@@ -38,6 +38,7 @@ Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Excludes: "*.pdb,*.log,*.pfx,
 
 [Icons]
 Name: "{group}\BatCave"; Filename: "{app}\BatCave.WindowsAgent.exe"; Parameters: "--desktop"
+Name: "{group}\BatCave - Start fresh"; Filename: "{app}\BatCave.WindowsAgent.exe"; Parameters: "--desktop --fresh-start"
 
 [Run]
 Filename: "{app}\BatCave.WindowsAgent.exe"; Parameters: "--desktop"; Description: "Open BatCave"; Flags: nowait postinstall skipifsilent

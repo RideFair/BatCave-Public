@@ -1,47 +1,47 @@
 # BatCave
 
-One keyboard. Both computers. BatCave lets you move your mouse across a shared
-screen edge and keep typing on another computer. Devices connect using mutual
-TLS 1.3 and must approve each other before sharing input.
+One keyboard. Both computers. Move your mouse across a shared screen edge and
+keep typing on another computer. Windows, Mac and Linux can each supply the
+keyboard and mouse or receive input from a linked computer.
 
-## Download BatCave
+## Download BatCave 0.3.0
 
-| Platform | Installer | Installation |
+| Your computer | Download | Install |
 | --- | --- | --- |
-| Windows 11 x64 | **[Download Windows 0.2.3 installer (.exe)](https://github.com/RideFair/BatCave-Public/releases/download/v0.2.3/BatCave-0.2.3-Windows-x64-Setup.exe)** | Run the installer and open BatCave. .NET is included. |
-| Apple Silicon Mac, macOS 13+ | **[Download Mac 0.2.0 installer (.dmg)](https://github.com/RideFair/BatCave-Public/releases/download/v0.2.0/BatCave-0.2.0-arm64.dmg)** | Drag the versioned app to Applications and open it. An existing BatCave app stays separate. |
-| Ubuntu 24.04 amd64 desktop | **[Download Linux 0.2.0 installer (.deb)](https://github.com/RideFair/BatCave-Public/releases/download/v0.2.0/BatCave-Linux-0.2.0-amd64.deb)** | Open the package with your software installer, then launch BatCave. |
+| Windows 11 x64 | **[Windows installer (.exe)](https://github.com/RideFair/BatCave-Public/releases/download/v0.3.0/BatCave-0.3.0-Windows-x64-Setup.exe)** | Run the installer, then open BatCave. .NET is included. |
+| Apple Silicon Mac, macOS 13+ | **[Mac installer (.dmg)](https://github.com/RideFair/BatCave-Public/releases/download/v0.3.0/BatCave-0.3.0-arm64.dmg)** | Open the disk image, drag BatCave-0.3.0 to Applications, then open it. |
+| Ubuntu 24.04 amd64 desktop | **[Linux installer (.deb)](https://github.com/RideFair/BatCave-Public/releases/download/v0.3.0/BatCave-Linux-0.3.0-amd64.deb)** | Open with your software installer, or run `sudo apt install ./BatCave-Linux-0.3.0-amd64.deb` in its download folder. |
 
-Downloads are public; no GitHub account is required. Release notes and checksums:
-[Windows 0.2.3](https://github.com/RideFair/BatCave-Public/releases/tag/v0.2.3),
-[Mac/Linux 0.2.0](https://github.com/RideFair/BatCave-Public/releases/tag/v0.2.0).
-Windows is unsigned; Mac is ad-hoc signed and not notarized. Physical fresh-device
-setup and secure input/recovery checks remain incomplete; see the release notes.
+No GitHub account is needed. [Release notes and checksums](https://github.com/RideFair/BatCave-Public/releases/tag/v0.3.0)
+include the verification record. Windows is unsigned; Mac is ad-hoc signed and
+not notarized. Physical fresh-device input and recovery testing remains pending.
+On Mac, use **Open Anyway** for this app in System Settings → Privacy & Security
+if macOS blocks it; keep Gatekeeper enabled.
 
 ## Link your computers
 
-The updated source opens directly to nearby computers. Open BatCave on both
-computers, choose the one you want to link, compare the eight digits, and choose
-**Codes match · Link and share** on both. BatCave handles the connection and a
-default screen arrangement. **Arrange screens** is available if you want to move
-the other screen. Required system permission prompts explain what to allow.
+Open BatCave on both computers on the same local network. Select the nearby
+computer, compare the eight digits, then choose **Codes match · Link and share**
+on both screens. No connection files or network addresses are needed.
 
-**The 0.2.x downloads above still use the earlier manual pairing flow.** Nearby
-setup is under cross-platform verification; matching new installers have not
-been released. Existing paired identities are preserved by the updated source.
-A new approval can start only the first verified connection, within 30 seconds.
-Reconnecting later stays paused until you explicitly resume sharing.
+The computer that starts pairing supplies the keyboard and mouse. BatCave places
+the other screen on its right; **Arrange screens** lets you match your desk.
+Approve the system permissions when asked. You can change input roles later.
+If permission setup takes longer than the initial approval window, use the sharing
+action in **Link devices**. Reconnect stays paused until you resume sharing.
 
-Windows 0.2.3 can send or receive input; install it on both PCs for Windows-to-Windows.
-The published Mac/Linux 0.2.0 apps receive Windows input. Their source roles need
-updated native packages. Physical secure input and fresh-device setup still need
-verification. WSL verifies builds and packages, but does not provide the desktop
-permission and input checks required for Linux.
+Use 0.3.0 on both computers. Existing pairings survive upgrades. For a first-time
+setup test on a computer that already used BatCave, see the short
+[clean installation guide](Docs/Clean_Installation.md). Quit older copies before
+opening this one; uninstalling an old package is optional and keeps its saved setup.
 
-For source installation, see [Contributing](CONTRIBUTING.md#build-from-source).
-The [monitor guide](Docs/Monitor_Layout.md) explains placement. Network file
-transfer is not enabled; its [shared contract](Universal/Protocol/File_Transfer_Proposal.md)
-is being developed.
+Linux needs a full desktop with the appropriate input portal and an unlocked
+keyring. The app explains missing access. WSL can check builds but cannot verify
+desktop input; see the [Linux requirements](Operating_System_Specific/Linux/README.md#desktop-requirements).
+Network file transfer and shared audio are not included in this release.
+
+For source builds, see [Contributing](CONTRIBUTING.md#build-from-source).
+The [monitor guide](Docs/Monitor_Layout.md) explains screen placement.
 
 ## Help improve BatCave
 
@@ -52,13 +52,15 @@ Coding agents should also read [AGENTS.md](AGENTS.md).
 
 ## Security and privacy
 
-See [SECURITY.md](SECURITY.md) for private vulnerability reporting and the trust
-boundary. Private keys stay on their originating device. Clipboard sharing is
-optional, and reconnecting never starts input by itself.
+Devices approve each other before sharing input over pinned mutual TLS 1.3.
+Private keys stay on their originating device. See [SECURITY.md](SECURITY.md)
+for the trust boundary and private vulnerability reporting. Clipboard sharing
+is optional where supported; reconnecting never starts input by itself.
 
 Local device state is excluded from source packages. Run
 `python Scripts/check_public_source.py` before publishing; scan Git history for
-secrets separately. Neither check guarantees the absence of every vulnerability.
+secrets separately. These checks are not a guarantee that every vulnerability
+has been found.
 
 ## Maintainer and contact
 

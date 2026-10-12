@@ -1,6 +1,6 @@
 # Security policy
 
-This policy describes the published source and the release checks still required.
+This policy describes BatCave 0.3.0 and its remaining physical validation.
 Windows, Mac and Linux use approved identities and authenticated transport.
 Live cross-platform and fresh-device checks remain pending.
 Older plaintext branches and packages are unsuitable for deployment.
@@ -20,6 +20,8 @@ This design does not protect against malware already running as the same OS user
 Windows device keys use the current user's CNG provider with export disabled.
 Mac keys remain in Keychain; Linux keys remain in the desktop Secret Service.
 Uninstall preserves pairing state for reinstall; it does not revoke peers.
+Start fresh requires explicit confirmation and backs up that state, preserving
+its original protected key. Backups remain sensitive and must stay private.
 
 Incoming JSON frames are limited to 256 KiB and decoded clipboard text to 64 KiB.
 Outbound Windows queues have message and byte limits and disconnect on overflow.
@@ -36,11 +38,10 @@ The Mac guided app connects through pinned mutual TLS. Its legacy command-line
 network path is disabled by default; explicit development access permits loopback
 only. Windows installers exclude the legacy plaintext network mode.
 
-## Nearby pairing in the updated source
+## Nearby pairing
 
-The published 0.2.x installers do not implement nearby pairing. The replacement
-bootstrap is specified in [Nearby pairing](Universal/Protocol/Nearby_Pairing.md)
-and remains subject to cross-platform review and physical-device validation.
+Version 0.3.0 includes the [nearby pairing protocol](Universal/Protocol/Nearby_Pairing.md).
+Physical-device validation remains pending; older 0.2.x installers use manual pairing.
 
 Nearby discovery advertises public device identity information on the local IPv4
 network. It grants no trust. A separate, time-limited TCP endpoint exchanges only
@@ -62,8 +63,11 @@ release requirements, not a substitute for external security review.
 
 Build with a supported, patched .NET 10 SDK/runtime. Self-contained installers
 must be rebuilt and redistributed for runtime security updates. Before a public
-binary release, complete cross-platform recovery tests,
-clean-device installation checks, package privacy inspection, and signing.
+release promoted as fully validated, complete physical cross-platform recovery
+and clean-device checks and obtain platform signing. Version 0.3.0 packages are
+available for those installation tests after automated checks and package privacy
+inspection. Windows is unsigned; Mac is ad-hoc signed and not notarized. This is
+not an independent security audit.
 
 ## Reporting
 

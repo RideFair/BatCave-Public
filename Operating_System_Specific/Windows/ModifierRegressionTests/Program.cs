@@ -19,6 +19,7 @@ internal static partial class ModifierRegression
         CheckPairingUi();
         CheckNearbyCancellation();
         CheckWindowShutdown();
+        CheckFreshSetup();
         CheckReceivingInput();
         CheckQueuedInput();
         CheckPlatformRoles();

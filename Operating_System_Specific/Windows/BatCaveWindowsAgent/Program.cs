@@ -17,12 +17,12 @@ internal static class Program
             return;
         }
 #if SECURE_DESKTOP_ONLY
-        RunSecureDesktop();
+        RunSecureDesktop(args.Contains("--fresh-start"));
         return;
 #else
-        if (args.Length == 0 || args.Contains("--desktop"))
+        if (args.Length == 0 || args.Contains("--desktop") || args.Contains("--fresh-start"))
         {
-            RunSecureDesktop();
+            RunSecureDesktop(args.Contains("--fresh-start"));
             return;
         }
         if (!args.Contains("--insecure-loopback-development"))
@@ -96,25 +96,45 @@ internal static class Program
 #endif
     }
 
-    private static void RunSecureDesktop()
+    private static void RunSecureDesktop(bool freshStart)
     {
         var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BatCave", "SecurePreview");
         using var mutex = new Mutex(true, "Local\\BatCaveSecureDesktop", out var firstInstance);
         if (!firstInstance) { MessageBox.Show("BatCave is already running. Open it from the system tray."); return; }
         try
         {
-            Directory.CreateDirectory(directory);
-            using var consoleLog = InstallConsoleLog(Path.Combine(directory, "Logs"));
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-        Application.EnableVisualStyles();
+            Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            using var identity = DeviceIdentityStore.OpenOrCreate(directory);
-            var approvals = new ApprovedPeerStore(directory);
-            using var window = new DesktopWindow(identity, approvals, directory);
-            Application.Run(window);
+            if (freshStart)
+            {
+                FreshSetupBackup.EnsureNoOtherAgent();
+                if (!FreshSetupBackup.Confirm(null, directory)) return;
+                ShowBackup(FreshSetupBackup.Create(directory), reopening: false);
+            }
+            bool requested;
+            Directory.CreateDirectory(directory);
+            using (var consoleLog = InstallConsoleLog(Path.Combine(directory, "Logs")))
+            using (var identity = DeviceIdentityStore.OpenOrCreate(directory))
+            {
+                var approvals = new ApprovedPeerStore(directory);
+                using var window = new DesktopWindow(identity, approvals, directory);
+                Application.Run(window);
+                requested = window.FreshStartRequested;
+            }
+            if (requested)
+            {
+                FreshSetupBackup.EnsureNoOtherAgent();
+                ShowBackup(FreshSetupBackup.Create(directory), reopening: true);
+            }
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "BatCave could not start", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
+
+    private static void ShowBackup(string? backup, bool reopening) => MessageBox.Show(
+        (backup is null ? "There was no saved setup to back up." : "Your previous setup is saved here:\n" + backup)
+        + (reopening ? "\n\nOpen BatCave again to link your computers from scratch." : "\n\nBatCave will now open with a fresh setup."),
+        "Ready to start fresh", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
     private static void ReadCommands(LocalBridgeAgent agent, LanBridgePeer lan)
     {

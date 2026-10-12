@@ -7,6 +7,7 @@ namespace BatCave.WindowsAgent;
 
 internal sealed partial class DesktopWindow : Form
 {
+    internal bool FreshStartRequested { get; private set; }
     private readonly DeviceIdentityStore _identity;
     private readonly ApprovedPeerStore _approvals;
     private readonly LanBridgePeer _lan;
@@ -156,6 +157,14 @@ internal sealed partial class DesktopWindow : Form
         permissions.Controls.Add(Body("Windows needs no extra input permission. If Windows asks about network access, allow BatCave on your private network."));
         permissions.Controls.Add(Body("You choose when to share. Pause sharing immediately returns control to this PC."));
         permissions.Controls.Add(Body("Minimize BatCave to keep it running. Closing it stops sharing and exits."));
+        var freshStart = Button("Start fresh…", () => Guard(() =>
+        {
+            FreshSetupBackup.EnsureNoOtherAgent();
+            if (FreshSetupBackup.Confirm(this, directory)) RequestFreshStart();
+        }));
+        ((DesktopButton)freshStart).Quiet = true;
+        permissions.Controls.Add(freshStart);
+        permissions.Controls.Add(Body("Save a backup of this setup and link your computers again."));
         AddPage(permissions);
 
         AddPage(BuildNearbyPage());
@@ -692,6 +701,11 @@ internal sealed partial class DesktopWindow : Form
             else { cleanup(); }
         }
         catch (InvalidOperationException) when (IsDisposed || !IsHandleCreated) { }
+    }
+    private void RequestFreshStart()
+    {
+        FreshStartRequested = true;
+        Close(); // Normal shutdown releases held input and closes transport first.
     }
     private void Quit() => Close();
     private void Guard(Action action)

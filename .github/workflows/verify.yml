@@ -58,7 +58,15 @@ jobs:
       - name: Compile Mac backend
         run: swift build --package-path Operating_System_Specific/MacOS -c release
       - name: Mac input, identity, TLS and file regressions
+        env:
+          BATCAVE_RENDER_OUTPUT: ${{ runner.temp }}/batcave-macos-screenshots
         run: swift test --package-path Operating_System_Specific/MacOS
+      - name: Upload synthetic Mac screenshots for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: BatCave-macOS-Setup-Screenshots
+          path: ${{ runner.temp }}/batcave-macos-screenshots/*.png
+          if-no-files-found: error
       - name: Check bundle script syntax
         run: |
           for script in Operating_System_Specific/MacOS/Scripts/*.sh; do
@@ -68,6 +76,8 @@ jobs:
         run: python3 Scripts/test_bundle_paths.py
       - name: Build isolated Mac setup installer
         run: bash Operating_System_Specific/MacOS/Scripts/build_setup_preview.sh
+      - name: Inspect Mac package contents for private artifacts
+        run: python3 Scripts/check_package_privacy.py Operating_System_Specific/MacOS/Build/SetupPreview/BatCave.app
       - name: Verify versioned installation and desktop alias preservation
         run: python3 Operating_System_Specific/MacOS/Scripts/test_setup_preview_install.py
       - name: Upload Mac installer and manifest

@@ -2,7 +2,7 @@
 
 The installer targets Windows 11 x64, includes .NET 10, and installs for the
 current user. The installer is unsigned. Clean-device installation and live
-cross-platform recovery checks remain required before release approval.
+cross-platform recovery checks remain pending for the downloadable 0.3.0 release.
 
 The app retains its existing installer identity and `BatCave/SecurePreview` state
 for compatible upgrades. New installations use the separate BatCave Desktop

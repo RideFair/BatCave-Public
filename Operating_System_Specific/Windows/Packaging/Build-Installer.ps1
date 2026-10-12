@@ -5,6 +5,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repository = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+$sourceCommit = (& git -C $repository rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or (& git -C $repository status --porcelain)) { throw 'Package from a clean committed checkout' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repository '.build\installer\packages' }
 # A fresh directory prevents stale symbols or local files entering a package.
 $publishDirectory = Join-Path $repository ('.build\installer\win-x64-' + [Guid]::NewGuid().ToString('N'))
@@ -25,8 +27,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
 $installer = Get-Item (Join-Path $OutputDirectory ('BatCave-' + $version + '-Windows-x64-Setup.exe'))
 $checksum = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -LiteralPath ($installer.FullName + '.sha256') -Value ($checksum + '  ' + $installer.Name) -Encoding ascii
-$sourceCommit = (& git -C $repository rev-parse HEAD).Trim()
 $dirty = [bool](& git -C $repository status --porcelain)
+if ($dirty -or (& git -C $repository rev-parse HEAD).Trim() -ne $sourceCommit) { throw 'Source changed during build; rebuild from a fixed commit' }
 @{ version=$version; sourceCommit=$sourceCommit; sourceDirty=$dirty;
    runtime='self-contained .NET 10'; architecture='win-x64'; minimumWindows='Windows 11';
    sha256=$checksum; signed=$false; macInteropVerified=$false } |
